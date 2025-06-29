@@ -160,6 +160,21 @@ export default function PDFViewer() {
   const [editingAnnotation, setEditingAnnotation] = useState<string | null>(null)
   const [editingDescription, setEditingDescription] = useState("")
   const [editingSuggestion, setEditingSuggestion] = useState("")
+  const [debugInfo, setDebugInfo] = useState<Array<{
+    text: string
+    page: number
+    found: boolean
+    coordinates?: {
+      viewport: { x: string; y: string }
+      pdf: { x: string; y: string }
+      size: { w: string; h: string }
+      pageSize: { w: string; h: string }
+    }
+    fallbackCoordinates?: { x: number; y: number }
+    actualPage?: number
+    searchStrategy?: string
+  }>>([])
+  const [showDebugPanel, setShowDebugPanel] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const pageRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -210,7 +225,7 @@ export default function PDFViewer() {
         // Mark as rendered and clean up
         renderedPages.current.add(pageNumber)
         renderTasks.current.delete(pageNumber)
-      } catch (err) {
+      } catch (err: any) {
         // Handle cancellation gracefully
         if (err.name === "RenderingCancelledException") {
           console.log(`Rendering cancelled for page ${pageNumber}`)
@@ -326,18 +341,160 @@ export default function PDFViewer() {
     }
   }, [pdfDoc, renderPage])
 
-  // 搜索文本
-  const searchText = useCallback(async () => {
-    if (!pdfDoc || !searchQuery.trim()) {
-      setSearchResults([])
-      return
+  // 搜索文本 - 支持UI搜索和程序化查找
+  // 文本标准化函数 - 处理标点符号和空格问题
+  const normalizeText = useCallback((text: string): string => {
+    return text
+      // 统一中文标点符号
+      .replace(/[""]/g, '"')  // 统一双引号
+      .replace(/['']/g, "'")  // 统一单引号
+      .replace(/[，]/g, ',')  // 统一逗号
+      .replace(/[。]/g, '.')  // 统一句号
+      .replace(/[？]/g, '?')  // 统一问号
+      .replace(/[！]/g, '!')  // 统一感叹号
+      .replace(/[：]/g, ':')  // 统一冒号
+      .replace(/[；]/g, ';')  // 统一分号
+      .replace(/[（]/g, '(')  // 统一左括号
+      .replace(/[）]/g, ')')  // 统一右括号
+      .replace(/[【]/g, '[')  // 统一左方括号
+      .replace(/[】]/g, ']')  // 统一右方括号
+      // 统一空格和换行
+      .replace(/\s+/g, ' ')   // 多个空格合并为一个
+      .replace(/[\r\n]+/g, ' ') // 换行符转为空格
+      .trim()
+  }, [])
+
+  // 智能文本匹配函数
+  const smartTextMatch = useCallback((searchText: string, targetText: string): boolean => {
+    const normalizedSearch = normalizeText(searchText.toLowerCase())
+    const normalizedTarget = normalizeText(targetText.toLowerCase())
+    
+    // 直接匹配
+    if (normalizedTarget.includes(normalizedSearch)) {
+      return true
+    }
+    
+    // 移除所有标点符号和空格的匹配
+    const cleanSearch = normalizedSearch.replace(/[^\w\u4e00-\u9fff]/g, '')
+    const cleanTarget = normalizedTarget.replace(/[^\w\u4e00-\u9fff]/g, '')
+    
+    if (cleanTarget.includes(cleanSearch)) {
+      return true
+    }
+    
+    // 模糊匹配：允许少量字符差异
+    if (cleanSearch.length > 5) {
+      const threshold = Math.floor(cleanSearch.length * 0.9) // 90%相似度
+      let matchCount = 0
+      let searchIndex = 0
+      
+      for (let i = 0; i < cleanTarget.length && searchIndex < cleanSearch.length; i++) {
+        if (cleanTarget[i] === cleanSearch[searchIndex]) {
+          matchCount++
+          searchIndex++
+        }
+      }
+      
+      return matchCount >= threshold
+    }
+    
+    return false
+  }, [normalizeText])
+
+  // 创建搜索结果的辅助函数
+  const createSearchResult = useCallback((
+    item: TextItem,
+    pageIndex: number,
+    textIndex: number,
+    paragraphIndex: number,
+    paragraph: TextItem[],
+    viewport: PDFPageViewport,
+    customText?: string
+  ): SearchResult => {
+    // 获取变换矩阵信息
+    const transform = item.transform
+
+    // PDF原始坐标系统 (左下角为原点)
+    const pdfX = transform[4]
+    const pdfY = transform[5]
+
+    // 视口坐标系统 (左上角为原点) - 修正计算方法
+    const viewportX = pdfX
+    const viewportY = viewport.height - pdfY
+
+    // 计算相对位置百分比
+    const xPercent = (pdfX / viewport.width) * 100
+    const yPercent = (viewportY / viewport.height) * 100
+
+    // 获取上下文 - 前后各取一些文本
+    const itemPosition = paragraph.indexOf(item)
+    const contextStart = Math.max(0, itemPosition - 2)
+    const contextEnd = Math.min(paragraph.length, itemPosition + 3)
+    const context = paragraph
+      .slice(contextStart, contextEnd)
+      .map((p) => p.str)
+      .join(" ")
+
+    return {
+      pageIndex: pageIndex - 1,
+      textIndex,
+      paragraphIndex: paragraphIndex + 1,
+      text: customText || item.str,
+      x: viewportX, // 使用视口坐标作为显示坐标
+      y: viewportY, // 使用视口坐标作为显示坐标
+      width: item.width,
+      height: item.height,
+      context: context.length > 100 ? context.substring(0, 100) + "..." : context,
+      coordinates: {
+        pdfCoordinates: {
+          x: pdfX,
+          y: pdfY,
+          width: item.width,
+          height: item.height,
+        },
+        viewportCoordinates: {
+          x: viewportX,
+          y: viewportY,
+          width: item.width,
+          height: item.height,
+        },
+        transform: [...transform],
+        pageSize: {
+          width: viewport.width,
+          height: viewport.height,
+        },
+        relativePosition: {
+          xPercent: Math.round(xPercent * 100) / 100,
+          yPercent: Math.round(yPercent * 100) / 100,
+        },
+      },
+    }
+  }, [])
+
+  const searchText = useCallback(async (options?: {
+    query?: string;
+    targetPage?: number;
+    returnFirst?: boolean;
+  }) => {
+    const queryText = options?.query || searchQuery
+    const targetPage = options?.targetPage
+    const returnFirst = options?.returnFirst || false
+    
+    if (!pdfDoc || !queryText.trim()) {
+      if (!returnFirst) {
+        setSearchResults([])
+      }
+      return returnFirst ? null : undefined
     }
 
     const results: SearchResult[] = []
-    const query = searchQuery.toLowerCase()
+    const lowerQuery = queryText.toLowerCase()
 
     try {
-      for (let pageIndex = 1; pageIndex <= numPages; pageIndex++) {
+      const startPage = targetPage || 1
+      const endPage = targetPage || numPages
+
+      for (let pageIndex = startPage; pageIndex <= endPage; pageIndex++) {
         const page = await pdfDoc.getPage(pageIndex)
         const textContent = await page.getTextContent()
         const viewport = page.getViewport({ scale: 1 }) // 使用scale 1获取原始坐标
@@ -378,77 +535,73 @@ export default function PDFViewer() {
         // 在每个段落中搜索
         paragraphs.forEach((paragraph, paragraphIndex) => {
           paragraph.forEach((item, textIndex) => {
-            if (item.str.toLowerCase().includes(query)) {
-              // 获取变换矩阵信息
-              const transform = item.transform
-
-              // PDF原始坐标系统 (左下角为原点)
-              const pdfX = transform[4]
-              const pdfY = transform[5]
-
-              // 视口坐标系统 (左上角为原点) - 修正计算方法
-              const viewportX = pdfX
-              const viewportY = viewport.height - pdfY
-
-              // 计算相对位置百分比
-              const xPercent = (pdfX / viewport.width) * 100
-              const yPercent = (viewportY / viewport.height) * 100
-
-              // 获取上下文 - 前后各取一些文本
-              const paragraphText = paragraph.map((p) => p.str).join(" ")
-              const itemPosition = paragraph.indexOf(item)
-              const contextStart = Math.max(0, itemPosition - 2)
-              const contextEnd = Math.min(paragraph.length, itemPosition + 3)
-              const context = paragraph
-                .slice(contextStart, contextEnd)
-                .map((p) => p.str)
-                .join(" ")
-
-              results.push({
-                pageIndex: pageIndex - 1,
-                textIndex,
-                paragraphIndex: paragraphIndex + 1,
-                text: item.str,
-                x: viewportX, // 使用视口坐标作为显示坐标
-                y: viewportY, // 使用视口坐标作为显示坐标
-                width: item.width,
-                height: item.height,
-                context: context.length > 100 ? context.substring(0, 100) + "..." : context,
-                coordinates: {
-                  pdfCoordinates: {
-                    x: pdfX,
-                    y: pdfY,
-                    width: item.width,
-                    height: item.height,
-                  },
-                  viewportCoordinates: {
-                    x: viewportX,
-                    y: viewportY,
-                    width: item.width,
-                    height: item.height,
-                  },
-                  transform: [...transform],
-                  pageSize: {
-                    width: viewport.width,
-                    height: viewport.height,
-                  },
-                  relativePosition: {
-                    xPercent: Math.round(xPercent * 100) / 100,
-                    yPercent: Math.round(yPercent * 100) / 100,
-                  },
-                },
-              })
+            // 智能匹配检查（处理标点符号和空格问题）
+            if (smartTextMatch(queryText, item.str)) {
+              console.log(`✅ 智能单项匹配成功: "${item.str}" 匹配查询 "${queryText}"`)
+              const result = createSearchResult(item, pageIndex, textIndex, paragraphIndex, paragraph, viewport)
+              results.push(result)
+              
+              if (returnFirst) {
+                return // 注意：这里return只是退出forEach，不是退出函数
+              }
+            }
+            // 传统匹配作为后备
+            else if (item.str.toLowerCase().includes(lowerQuery)) {
+              const result = createSearchResult(item, pageIndex, textIndex, paragraphIndex, paragraph, viewport)
+              results.push(result)
+              
+              if (returnFirst) {
+                return // 注意：这里return只是退出forEach，不是退出函数
+              }
             }
           })
+
+          // 段落级别的智能搜索（对于跨TextItem的文本）
+          if (returnFirst && results.length === 0) {
+            const paragraphText = paragraph.map(item => item.str).join('')
+            const paragraphTextWithSpaces = paragraph.map(item => item.str).join(' ')
+            
+            if (smartTextMatch(queryText, paragraphText) || smartTextMatch(queryText, paragraphTextWithSpaces)) {
+              console.log(`✅ 智能段落匹配成功在页面 ${pageIndex} 段落 ${paragraphIndex + 1}`)
+              console.log(`   查询: "${queryText}"`)
+              console.log(`   匹配: "${paragraphText.substring(0, 100)}${paragraphText.length > 100 ? '...' : ''}"`)
+              
+              // 使用段落中间的项作为定位点
+              const middleIndex = Math.floor(paragraph.length / 2)
+              const item = paragraph[middleIndex] || paragraph[0]
+              const result = createSearchResult(item, pageIndex, middleIndex, paragraphIndex, paragraph, viewport, queryText)
+              results.push(result)
+            }
+          }
         })
+
+        // 检查是否找到结果并需要立即返回
+        if (returnFirst && results.length > 0) {
+          const firstResult = results[0]
+          return {
+            pageIndex: firstResult.pageIndex,
+            x: firstResult.x,
+            y: firstResult.y,
+            width: firstResult.width,
+            height: firstResult.height,
+            text: firstResult.text,
+            pageSize: firstResult.coordinates.pageSize,
+          }
+        }
       }
 
-      setSearchResults(results)
-      setCurrentSearchIndex(results.length > 0 ? 0 : -1)
+      // 如果是UI搜索，更新状态
+      if (!returnFirst) {
+        setSearchResults(results)
+        setCurrentSearchIndex(results.length > 0 ? 0 : -1)
+      }
+
+      return returnFirst ? null : undefined
     } catch (err) {
       console.error("Error searching text:", err)
+      return returnFirst ? null : undefined
     }
-  }, [pdfDoc, searchQuery, numPages])
+  }, [pdfDoc, searchQuery, numPages, normalizeText, smartTextMatch, createSearchResult])
 
   // 跳转到搜索结果
   const goToSearchResult = useCallback(
@@ -723,12 +876,12 @@ ${pdfText}`
       console.error("Error calling DeepSeek API:", err)
 
       // 如果是网络错误或API错误，提供更详细的错误信息
-      if (err.message.includes("fetch")) {
+      if ((err as any).message?.includes("fetch")) {
         throw new Error("网络连接错误，请检查网络连接后重试")
-      } else if (err.message.includes("AI服务")) {
+      } else if ((err as any).message?.includes("AI服务")) {
         throw err // 重新抛出API相关错误
       } else {
-        throw new Error(`调用AI服务时发生错误: ${err.message}`)
+        throw new Error(`调用AI服务时发生错误: ${(err as any).message}`)
       }
     }
   }, [])
@@ -784,89 +937,7 @@ ${pdfText}`
     return parsedAnnotations
   }, [])
 
-  // 在PDF中搜索并定位文本
-  const findTextInPDF = useCallback(
-    async (searchText: string, targetPage?: number) => {
-      if (!pdfDoc || !searchText || searchText === "无特定位置") return null
 
-      try {
-        const startPage = targetPage || 1
-        const endPage = targetPage || numPages
-
-        for (let pageIndex = startPage; pageIndex <= endPage; pageIndex++) {
-          const page = await pdfDoc.getPage(pageIndex)
-          const textContent = await page.getTextContent()
-          const viewport = page.getViewport({ scale: 1 }) // 使用scale 1获取原始坐标
-          const textItems = textContent.items as TextItem[]
-
-          // 在当前页面搜索文本
-          for (let i = 0; i < textItems.length; i++) {
-            const item = textItems[i]
-            if (item.str.includes(searchText)) {
-              const transform = item.transform
-              const pdfX = transform[4]
-              const pdfY = transform[5]
-              const viewportX = pdfX
-              const viewportY = viewport.height - pdfY
-
-              return {
-                pageIndex: pageIndex - 1,
-                x: viewportX,
-                y: viewportY,
-                width: item.width,
-                height: item.height,
-                text: item.str,
-                pageSize: {
-                  width: viewport.width,
-                  height: viewport.height,
-                },
-              }
-            }
-          }
-
-          // 如果单个文本项中没找到，尝试组合文本搜索
-          let combinedText = ""
-
-          for (let i = 0; i < textItems.length; i++) {
-            combinedText += textItems[i].str
-
-            if (combinedText.includes(searchText)) {
-              const item = textItems[Math.max(0, i - 3)] // 取前面几个字符的位置
-              const transform = item.transform
-              const pdfX = transform[4]
-              const pdfY = transform[5]
-              const viewportX = pdfX
-              const viewportY = viewport.height - pdfY
-
-              return {
-                pageIndex: pageIndex - 1,
-                x: viewportX,
-                y: viewportY,
-                width: item.width,
-                height: item.height,
-                text: searchText,
-                pageSize: {
-                  width: viewport.width,
-                  height: viewport.height,
-                },
-              }
-            }
-
-            // 限制组合文本长度，避免内存问题
-            if (combinedText.length > 1000) {
-              combinedText = combinedText.slice(-500)
-            }
-          }
-        }
-
-        return null
-      } catch (err) {
-        console.error("Error finding text in PDF:", err)
-        return null
-      }
-    },
-    [pdfDoc, numPages],
-  )
 
   // 执行自动批注
   const performAutoAnnotation = useCallback(async () => {
@@ -874,6 +945,8 @@ ${pdfText}`
 
     setIsAutoAnnotating(true)
     setAutoAnnotationProgress("正在提取PDF文本...")
+    setDebugInfo([]) // 清空调试信息
+    setShowDebugPanel(false) // 隐藏调试面板
 
     try {
       // 1. 提取PDF文本
@@ -945,7 +1018,7 @@ SUGGESTION: 继续保持这种学术敏感性，可以进一步拓展研究的�
 SELECTED: 无特定位置
 ---ANNOTATION---`
 
-        setAutoAnnotationProgress(`AI服务暂时不可用，使用演示批注... (${apiError.message})`)
+        setAutoAnnotationProgress(`AI服务暂时不可用，使用演示批注... (${(apiError as any).message})`)
       }
 
       setAutoAnnotationProgress("正在解析批注结果...")
@@ -961,11 +1034,75 @@ SELECTED: 无特定位置
 
       // 4. 为每个批注找到在PDF中的位置
       const locatedAnnotations: Annotation[] = []
+      let successfulLocations = 0
+      let failedLocations = 0
+      const currentDebugInfo: typeof debugInfo = []
+
+      setDebugInfo([]) // 清空之前的调试信息
 
       for (const annotation of parsedAnnotations) {
-        const location = await findTextInPDF(annotation.selected, annotation.page)
+        console.log(`🔍 正在查找文本: "${annotation.selected}" (页面: ${annotation.page})`)
+        setAutoAnnotationProgress(`正在定位批注 ${parsedAnnotations.indexOf(annotation) + 1}/${parsedAnnotations.length}: "${annotation.selected.substring(0, 20)}${annotation.selected.length > 20 ? '...' : ''}"`)
+        
+        // 先在指定页面搜索
+        let location = null
+        if (annotation.page && annotation.selected !== "无特定位置") {
+          console.log(`🎯 首先在页面 ${annotation.page} 搜索: "${annotation.selected}"`)
+          location = await searchText({
+            query: annotation.selected,
+            targetPage: annotation.page,
+            returnFirst: true
+          })
+        }
+        
+        // 如果指定页面找不到，则搜索全部页面
+        if (!location && annotation.selected !== "无特定位置") {
+          console.log(`🔍 页面 ${annotation.page} 未找到，搜索全部页面: "${annotation.selected}"`)
+          location = await searchText({
+            query: annotation.selected,
+            returnFirst: true  // 不指定targetPage，搜索全部页面
+          })
+          
+          if (location) {
+            console.log(`✅ 在页面 ${location.pageIndex + 1} 找到文本，而不是AI建议的页面 ${annotation.page}`)
+          }
+        }
 
         if (location) {
+          successfulLocations++
+          const coordinatesInfo = {
+            viewport: { x: location.x.toFixed(2), y: location.y.toFixed(2) },
+            pdf: { 
+              x: location.x.toFixed(2), 
+              y: (location.pageSize.height - location.y).toFixed(2) 
+            },
+            size: { w: location.width.toFixed(2), h: location.height.toFixed(2) },
+            pageSize: { 
+              w: location.pageSize.width.toFixed(0), 
+              h: location.pageSize.height.toFixed(0) 
+            }
+          }
+          
+          console.log(`✅ 找到文本位置:`, {
+            text: annotation.selected,
+            page: location.pageIndex + 1,
+            coordinates: coordinatesInfo
+          })
+
+          // 添加到调试信息
+          currentDebugInfo.push({
+            text: annotation.selected,
+            page: annotation.page || location.pageIndex + 1,
+            found: true,
+            coordinates: coordinatesInfo,
+            actualPage: location.pageIndex + 1,
+            searchStrategy: annotation.page && location.pageIndex + 1 !== annotation.page 
+              ? `指定页面(${annotation.page})未找到，全页面搜索成功` 
+              : annotation.page 
+                ? `指定页面(${annotation.page})搜索成功`
+                : `全页面搜索成功`
+          })
+
           // 使用与搜索结果相同的坐标计算方法
           locatedAnnotations.push({
             id: annotation.id,
@@ -1002,13 +1139,32 @@ SELECTED: 无特定位置
             },
           })
         } else {
+          failedLocations++
+          console.log(`❌ 未找到文本: "${annotation.selected}" (页面: ${annotation.page})`)
+          
           const pageIndex = Math.max(0, (annotation.page || 1) - 1)
           const existingAnnotationsOnPage = locatedAnnotations.filter((a) => a.pageIndex === pageIndex).length
+          const fallbackX = 50
+          const fallbackY = 50 + existingAnnotationsOnPage * 30
+          
+          console.log(`📍 使用默认位置: 页面 ${pageIndex + 1}, 坐标 (${fallbackX}, ${fallbackY})`)
+          
+          // 添加到调试信息
+          currentDebugInfo.push({
+            text: annotation.selected,
+            page: annotation.page || pageIndex + 1,
+            found: false,
+            fallbackCoordinates: { x: fallbackX, y: fallbackY },
+            searchStrategy: annotation.page 
+              ? `指定页面(${annotation.page})和全页面搜索均未找到`
+              : `全页面搜索未找到`
+          })
+          
           locatedAnnotations.push({
             id: annotation.id,
             pageIndex: pageIndex,
-            x: 50,
-            y: 50 + existingAnnotationsOnPage * 30,
+            x: fallbackX,
+            y: fallbackY,
             width: 100,
             height: 20,
             content: annotation.title,
@@ -1025,6 +1181,21 @@ SELECTED: 无特定位置
         }
       }
 
+      const directHits = currentDebugInfo.filter(info => info.found && info.actualPage === info.page).length
+      const globalSearchHits = currentDebugInfo.filter(info => info.found && info.actualPage !== info.page).length
+      
+      console.log(`📊 文本定位统计:`)
+      console.log(`   总计: ${parsedAnnotations.length} 个批注`)
+      console.log(`   成功: ${successfulLocations} 个 (${Math.round(successfulLocations/parsedAnnotations.length*100)}%)`)
+      console.log(`   失败: ${failedLocations} 个 (${Math.round(failedLocations/parsedAnnotations.length*100)}%)`)
+      console.log(`📍 搜索策略详情:`)
+      console.log(`   指定页面直接找到: ${directHits} 个`)
+      console.log(`   全页面搜索救援: ${globalSearchHits} 个`)
+      console.log(`   完全未找到: ${failedLocations} 个`)
+
+      // 更新调试信息
+      setDebugInfo(currentDebugInfo)
+
       // 5. 添加到批注列表
       setAnnotations((prev) => [...prev, ...locatedAnnotations])
 
@@ -1033,14 +1204,20 @@ SELECTED: 无特定位置
         : `AI批注完成！共生成 ${locatedAnnotations.length} 条批注`
 
       setAutoAnnotationProgress(statusMessage)
+      
+      // 显示调试面板，让用户查看定位结果
+      if (currentDebugInfo.length > 0) {
+        setShowDebugPanel(true)
+      }
 
       // 5秒后清除进度信息
       setTimeout(() => {
         setAutoAnnotationProgress("")
       }, 5000)
-    } catch (err) {
+    } catch (err: any) {
       console.error("Auto annotation error:", err)
       setAutoAnnotationProgress(`批注失败：${err.message}`)
+      setDebugInfo([]) // 清空调试信息
 
       setTimeout(() => {
         setAutoAnnotationProgress("")
@@ -1048,7 +1225,7 @@ SELECTED: 无特定位置
     } finally {
       setIsAutoAnnotating(false)
     }
-  }, [pdfDoc, isAutoAnnotating, extractPDFText, callDeepSeekAPI, parseAnnotations, findTextInPDF])
+  }, [pdfDoc, isAutoAnnotating, extractPDFText, callDeepSeekAPI, parseAnnotations, searchText])
 
   // 缩放控制
   const zoomIn = () => setScale((prev) => Math.min(prev + 0.25, 3))
@@ -1204,6 +1381,17 @@ SELECTED: 无特定位置
             <Button onClick={zoomIn} size="sm" variant="outline">
               <ZoomIn className="w-4 h-4" />
             </Button>
+            {debugInfo.length > 0 && (
+              <Button
+                onClick={() => setShowDebugPanel(!showDebugPanel)}
+                size="sm"
+                variant="outline"
+                className={`${showDebugPanel ? "bg-blue-100 text-blue-700" : ""}`}
+              >
+                <MapPin className="w-4 h-4 mr-2" />
+                调试信息 ({debugInfo.length})
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1412,9 +1600,13 @@ SELECTED: 无特定位置
                 placeholder="Search in PDF..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && searchText()}
+                onKeyPress={(e) => {
+                  if (e.key === "Enter") {
+                    searchText()
+                  }
+                }}
               />
-              <Button onClick={searchText} size="sm">
+              <Button onClick={() => searchText()} size="sm">
                 <Search className="w-4 h-4" />
               </Button>
             </div>
@@ -1513,6 +1705,108 @@ SELECTED: 无特定位置
             )}
           </CardContent>
         </Card>
+
+        {/* 调试信息面板 */}
+        {showDebugPanel && debugInfo.length > 0 && (
+          <Card className="m-4">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <MapPin className="w-4 h-4" />
+                文本定位调试信息
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 max-h-64 overflow-y-auto">
+              {debugInfo.map((info, index) => (
+                <div
+                  key={index}
+                  className={`p-3 border rounded-lg text-xs ${
+                    info.found
+                      ? "bg-green-50 border-green-200"
+                      : "bg-red-50 border-red-200"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-medium text-gray-800">
+                      {info.found ? "✅ 找到" : "❌ 未找到"}
+                    </div>
+                    <div className="flex gap-1">
+                      <Badge variant="outline" className="text-xs">
+                        AI建议: 页面 {info.page}
+                      </Badge>
+                      {info.found && info.actualPage && info.actualPage !== info.page && (
+                        <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700">
+                          实际: 页面 {info.actualPage}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {info.searchStrategy && (
+                    <div className="mb-2 p-2 bg-blue-50 rounded text-xs">
+                      <div className="font-medium text-blue-700 mb-1">搜索策略:</div>
+                      <div className="text-blue-600">{info.searchStrategy}</div>
+                    </div>
+                  )}
+                  
+                  <div className="mb-2">
+                    <div className="font-medium text-gray-600 mb-1">查找文本:</div>
+                    <div className="bg-white p-2 rounded border text-gray-800">
+                      "{info.text}"
+                    </div>
+                  </div>
+
+                  {info.found && info.coordinates ? (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="font-medium text-blue-600">视口坐标:</div>
+                          <div>X: {info.coordinates.viewport.x}</div>
+                          <div>Y: {info.coordinates.viewport.y}</div>
+                        </div>
+                        <div>
+                          <div className="font-medium text-green-600">PDF坐标:</div>
+                          <div>X: {info.coordinates.pdf.x}</div>
+                          <div>Y: {info.coordinates.pdf.y}</div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="font-medium text-purple-600">尺寸:</div>
+                          <div>W: {info.coordinates.size.w}</div>
+                          <div>H: {info.coordinates.size.h}</div>
+                        </div>
+                        <div>
+                          <div className="font-medium text-orange-600">页面尺寸:</div>
+                          <div>{info.coordinates.pageSize.w} × {info.coordinates.pageSize.h}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    info.fallbackCoordinates && (
+                      <div>
+                        <div className="font-medium text-red-600">默认位置:</div>
+                        <div>X: {info.fallbackCoordinates.x}, Y: {info.fallbackCoordinates.y}</div>
+                      </div>
+                    )
+                  )}
+                </div>
+              ))}
+              
+              <div className="mt-4 p-2 bg-gray-100 rounded text-xs">
+                <div className="font-medium text-gray-700">统计信息:</div>
+                <div>总计: {debugInfo.length} 个批注</div>
+                <div>成功定位: {debugInfo.filter(info => info.found).length} 个</div>
+                <div>使用默认位置: {debugInfo.filter(info => !info.found).length} 个</div>
+                <div className="mt-2 border-t pt-2">
+                  <div className="font-medium text-blue-700">搜索详情:</div>
+                  <div>指定页面直接找到: {debugInfo.filter(info => info.found && info.actualPage === info.page).length} 个</div>
+                  <div>全页面搜索找到: {debugInfo.filter(info => info.found && info.actualPage !== info.page).length} 个</div>
+                  <div>完全未找到: {debugInfo.filter(info => !info.found).length} 个</div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* 注释区域 */}
         <Card className="m-4 flex-1">
@@ -1644,7 +1938,7 @@ SELECTED: 无特定位置
                               } else {
                                 // 开始编辑
                                 setEditingAnnotation(annotation.id)
-                                setEditingDescription(annotation.aiAnnotation.description)
+                                setEditingDescription(annotation.aiAnnotation?.description || "")
                               }
                             }}
                             className="h-6 text-xs"
@@ -1695,7 +1989,7 @@ SELECTED: 无特定位置
                               } else {
                                 // 开始编辑
                                 setEditingAnnotation(`${annotation.id}-suggestion`)
-                                setEditingSuggestion(annotation.aiAnnotation.suggestion)
+                                setEditingSuggestion(annotation.aiAnnotation?.suggestion || "")
                               }
                             }}
                             className="h-6 text-xs"
