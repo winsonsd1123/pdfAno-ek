@@ -176,6 +176,7 @@ export default function PDFViewer() {
     searchStrategy?: string
   }>>([])
   const [showDebugPanel, setShowDebugPanel] = useState(false)
+  const [activeTab, setActiveTab] = useState("search")
 
   const containerRef = useRef<HTMLDivElement>(null)
   const pageRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -1044,6 +1045,7 @@ ${pdfText}`
     if (!pdfDoc || isAutoAnnotating) return
 
     setIsAutoAnnotating(true)
+    setActiveTab("annotations") // 自动切换到批注标签页
     setAutoAnnotationProgress("正在提取PDF文本...")
     setDebugInfo([]) // 清空调试信息
     setShowDebugPanel(false) // 隐藏调试面板
@@ -1625,7 +1627,7 @@ ${pdfText}`
           </div>
         </div>
         {/* 标签页内容 */}
-        <Tabs defaultValue="search" className="flex flex-col flex-1 m-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 m-4">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="search" className="flex items-center gap-2">
               <Search className="w-4 h-4" />
