@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Search, Plus, MessageSquare, ZoomIn, ZoomOut, MapPin } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 
 // PDF.js types
 interface PDFDocumentProxy {
@@ -183,6 +184,63 @@ export default function PDFViewer() {
 
   // Add render task tracking
   const renderTasks = useRef<Map<number, PDFRenderTask>>(new Map())
+
+  // 添加批注面板滚动容器的ref
+  const annotationPanelRef = useRef<HTMLDivElement>(null)
+  // 添加批注项ref映射
+  const annotationItemRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+
+  // 批注排序函数 - 使用PDF.js坐标信息进行排序
+  const sortAnnotations = useCallback((annotations: Annotation[]): Annotation[] => {
+    return [...annotations].sort((a, b) => {
+      // 首先按页面排序
+      if (a.pageIndex !== b.pageIndex) {
+        return a.pageIndex - b.pageIndex
+      }
+      
+      // 在同一页面内，按Y坐标排序（从上到下）
+      // 优先使用PDF.js的坐标信息
+      if (a.coordinates && b.coordinates) {
+        // 使用PDF坐标系统的Y坐标进行排序（PDF坐标系是从下往上的，所以较大的Y值在上方）
+        return b.coordinates.pdfCoordinates.y - a.coordinates.pdfCoordinates.y
+      }
+      
+      // 回退到视口坐标（视口坐标系是从上往下的，所以较小的Y值在上方）
+      if (a.coordinates && !b.coordinates) {
+        // 如果只有a有坐标信息，转换为可比较的格式
+        return a.coordinates.viewportCoordinates.y - a.y
+      }
+      
+      if (!a.coordinates && b.coordinates) {
+        // 如果只有b有坐标信息，转换为可比较的格式
+        return a.y - b.coordinates.viewportCoordinates.y
+      }
+      
+      // 都没有详细坐标信息时，使用基础Y坐标（视口坐标系）
+      return a.y - b.y
+    })
+  }, [])
+
+  // 滚动到指定批注项的函数
+  const scrollToAnnotationItem = useCallback((annotationId: string) => {
+    const annotationElement = annotationItemRefs.current.get(annotationId)
+    const panelElement = annotationPanelRef.current
+    
+    if (annotationElement && panelElement) {
+      // 使用scrollIntoView方法，更准确地滚动到顶部
+      annotationElement.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start', // 将元素滚动到容器顶部
+        inline: 'nearest'
+      })
+      
+      // 可选：添加高亮效果
+      annotationElement.classList.add('animate-pulse')
+      setTimeout(() => {
+        annotationElement.classList.remove('animate-pulse')
+      }, 1000)
+    }
+  }, [])
 
   // 渲染PDF页面
   const renderPage = useCallback(
@@ -369,12 +427,12 @@ export default function PDFViewer() {
     const normalizedSearch = normalizeText(searchText.toLowerCase())
     const normalizedTarget = normalizeText(targetText.toLowerCase())
     
-    // 直接匹配
+    // 1. 直接匹配
     if (normalizedTarget.includes(normalizedSearch)) {
       return true
     }
     
-    // 移除所有标点符号和空格的匹配
+    // 2. 移除所有标点符号和空格的匹配
     const cleanSearch = normalizedSearch.replace(/[^\w\u4e00-\u9fff]/g, '')
     const cleanTarget = normalizedTarget.replace(/[^\w\u4e00-\u9fff]/g, '')
     
@@ -382,21 +440,63 @@ export default function PDFViewer() {
       return true
     }
     
-    // 模糊匹配：允许少量字符差异
-    if (cleanSearch.length > 5) {
-      const threshold = Math.floor(cleanSearch.length * 0.9) // 90%相似度
-      let matchCount = 0
-      let searchIndex = 0
+    // 3. 更激进的文本清理：只保留中文字符和字母数字
+    const veryCleanSearch = normalizedSearch.replace(/[^\u4e00-\u9fff\w]/g, '')
+    const veryCleanTarget = normalizedTarget.replace(/[^\u4e00-\u9fff\w]/g, '')
+    
+    if (veryCleanTarget.includes(veryCleanSearch)) {
+      return true
+    }
+    
+    // 4. 分词匹配：将搜索文本分成关键词进行匹配
+    const searchWords = normalizedSearch.split(/\s+/).filter(word => word.length > 0)
+    const targetWords = normalizedTarget.split(/\s+/).filter(word => word.length > 0)
+    
+    if (searchWords.length > 1) {
+      // 检查所有关键词是否都能在目标文本中找到
+      const foundWords = searchWords.filter(searchWord => {
+        return targetWords.some(targetWord => 
+          targetWord.includes(searchWord) || 
+          targetWord.replace(/[^\w\u4e00-\u9fff]/g, '').includes(searchWord.replace(/[^\w\u4e00-\u9fff]/g, ''))
+        )
+      })
       
+      // 如果找到了80%以上的关键词，认为匹配
+      if (foundWords.length >= Math.floor(searchWords.length * 0.8)) {
+        return true
+      }
+    }
+    
+    // 5. 序列匹配：检查搜索文本的字符序列是否在目标文本中按顺序出现
+    if (cleanSearch.length > 3) {
+      let searchIndex = 0
       for (let i = 0; i < cleanTarget.length && searchIndex < cleanSearch.length; i++) {
         if (cleanTarget[i] === cleanSearch[searchIndex]) {
-          matchCount++
           searchIndex++
         }
       }
       
-      return matchCount >= threshold
+      // 如果找到了85%以上的字符按顺序出现，认为匹配
+      if (searchIndex >= Math.floor(cleanSearch.length * 0.85)) {
+        return true
+      }
     }
+    
+         // 6. 数字和文本分别匹配（针对"1. 元素优选"这种情况）
+     const searchNumbers: string[] = normalizedSearch.match(/\d+/g) || []
+     const targetNumbers: string[] = normalizedTarget.match(/\d+/g) || []
+     const searchChinese = normalizedSearch.replace(/[^\u4e00-\u9fff]/g, '')
+     const targetChinese = normalizedTarget.replace(/[^\u4e00-\u9fff]/g, '')
+     
+     if (searchNumbers.length > 0 && searchChinese.length > 0) {
+       const numbersMatch = searchNumbers.some((num: string) => targetNumbers.includes(num))
+       const chineseMatch = targetChinese.includes(searchChinese) || 
+                           searchChinese.split('').every((char: string) => targetChinese.includes(char))
+       
+       if (numbersMatch && chineseMatch) {
+         return true
+       }
+     }
     
     return false
   }, [normalizeText])
@@ -411,63 +511,63 @@ export default function PDFViewer() {
     viewport: PDFPageViewport,
     customText?: string
   ): SearchResult => {
-    // 获取变换矩阵信息
-    const transform = item.transform
+              // 获取变换矩阵信息
+              const transform = item.transform
 
-    // PDF原始坐标系统 (左下角为原点)
-    const pdfX = transform[4]
-    const pdfY = transform[5]
+              // PDF原始坐标系统 (左下角为原点)
+              const pdfX = transform[4]
+              const pdfY = transform[5]
 
-    // 视口坐标系统 (左上角为原点) - 修正计算方法
-    const viewportX = pdfX
-    const viewportY = viewport.height - pdfY
+              // 视口坐标系统 (左上角为原点) - 修正计算方法
+              const viewportX = pdfX
+              const viewportY = viewport.height - pdfY
 
-    // 计算相对位置百分比
-    const xPercent = (pdfX / viewport.width) * 100
-    const yPercent = (viewportY / viewport.height) * 100
+              // 计算相对位置百分比
+              const xPercent = (pdfX / viewport.width) * 100
+              const yPercent = (viewportY / viewport.height) * 100
 
-    // 获取上下文 - 前后各取一些文本
-    const itemPosition = paragraph.indexOf(item)
-    const contextStart = Math.max(0, itemPosition - 2)
-    const contextEnd = Math.min(paragraph.length, itemPosition + 3)
-    const context = paragraph
-      .slice(contextStart, contextEnd)
-      .map((p) => p.str)
-      .join(" ")
+              // 获取上下文 - 前后各取一些文本
+              const itemPosition = paragraph.indexOf(item)
+              const contextStart = Math.max(0, itemPosition - 2)
+              const contextEnd = Math.min(paragraph.length, itemPosition + 3)
+              const context = paragraph
+                .slice(contextStart, contextEnd)
+                .map((p) => p.str)
+                .join(" ")
 
     return {
-      pageIndex: pageIndex - 1,
-      textIndex,
-      paragraphIndex: paragraphIndex + 1,
+                pageIndex: pageIndex - 1,
+                textIndex,
+                paragraphIndex: paragraphIndex + 1,
       text: customText || item.str,
-      x: viewportX, // 使用视口坐标作为显示坐标
-      y: viewportY, // 使用视口坐标作为显示坐标
-      width: item.width,
-      height: item.height,
-      context: context.length > 100 ? context.substring(0, 100) + "..." : context,
-      coordinates: {
-        pdfCoordinates: {
-          x: pdfX,
-          y: pdfY,
-          width: item.width,
-          height: item.height,
-        },
-        viewportCoordinates: {
-          x: viewportX,
-          y: viewportY,
-          width: item.width,
-          height: item.height,
-        },
-        transform: [...transform],
-        pageSize: {
-          width: viewport.width,
-          height: viewport.height,
-        },
-        relativePosition: {
-          xPercent: Math.round(xPercent * 100) / 100,
-          yPercent: Math.round(yPercent * 100) / 100,
-        },
-      },
+                x: viewportX, // 使用视口坐标作为显示坐标
+                y: viewportY, // 使用视口坐标作为显示坐标
+                width: item.width,
+                height: item.height,
+                context: context.length > 100 ? context.substring(0, 100) + "..." : context,
+                coordinates: {
+                  pdfCoordinates: {
+                    x: pdfX,
+                    y: pdfY,
+                    width: item.width,
+                    height: item.height,
+                  },
+                  viewportCoordinates: {
+                    x: viewportX,
+                    y: viewportY,
+                    width: item.width,
+                    height: item.height,
+                  },
+                  transform: [...transform],
+                  pageSize: {
+                    width: viewport.width,
+                    height: viewport.height,
+                  },
+                  relativePosition: {
+                    xPercent: Math.round(xPercent * 100) / 100,
+                    yPercent: Math.round(yPercent * 100) / 100,
+                  },
+                },
     }
   }, [])
 
@@ -592,8 +692,8 @@ export default function PDFViewer() {
 
       // 如果是UI搜索，更新状态
       if (!returnFirst) {
-        setSearchResults(results)
-        setCurrentSearchIndex(results.length > 0 ? 0 : -1)
+      setSearchResults(results)
+      setCurrentSearchIndex(results.length > 0 ? 0 : -1)
       }
 
       return returnFirst ? null : undefined
@@ -957,69 +1057,8 @@ ${pdfText}`
 
       setAutoAnnotationProgress("正在调用AI模型生成批注...")
 
-      let apiResponse
-      let usingFallback = false
-
-      try {
-        // 2. 调用DeepSeek API
-        apiResponse = await callDeepSeekAPI(pdfText)
-      } catch (apiError) {
-        console.error("AI API调用失败，使用演示批注:", apiError)
-        usingFallback = true
-
-        // 如果API调用失败，提供更智能的演示批注
-        apiResponse = `---ANNOTATION---
-TYPE: structure
-SEVERITY: medium
-PAGE: 1
-TITLE: 论文整体结构评估
-DESCRIPTION: 同学你好，从整体来看，这篇论文涉及了一个很有意义的研究主题。建议进一步完善论文的整体结构，确保各个部分之间的逻辑关系更加清晰。特别是要注意引言部分对研究背景的阐述，以及结论部分对研究成果的总结。
-SUGGESTION: 建议按照标准学术论文格式重新组织内容：1）完善摘要部分，突出研究的创新点；2）加强引言部分的文献综述；3）详细描述研究方法；4）充实结果分析；5）深化结论讨论。
-SELECTED: 无特定位置
----ANNOTATION---
-
----ANNOTATION---
-TYPE: format
-SEVERITY: medium
-PAGE: 1
-TITLE: 学术规范需要注意
-DESCRIPTION: 在学术写作中，格式规范非常重要。请注意标题的层级结构，确保一级标题、二级标题的格式统一。同时，如果有图表，请确保都有规范的标题和编号。
-SUGGESTION: 1）统一标题格式，建议使用1、1.1、1.1.1的编号方式；2）检查所有图表是否有标题和编号；3）确保参考文献格式符合学术要求；4）检查引用标注是否完整准确。
-SELECTED: 无特定位置
----ANNOTATION---
-
----ANNOTATION---
-TYPE: writing
-SEVERITY: low
-PAGE: 1
-TITLE: 语言表达建议
-DESCRIPTION: 论文的语言表达总体来说是清晰的，但在某些地方可以更加学术化。建议避免使用过于口语化的表达，多使用学术写作中的正式用词。
-SUGGESTION: 1）避免使用"很多"、"非常"等口语化词汇，改用"大量"、"显著"等学术用词；2）多使用被动语态和客观表述；3）注意句式的多样性，避免句式过于单一；4）确保专业术语使用准确。
-SELECTED: 无特定位置
----ANNOTATION---
-
----ANNOTATION---
-TYPE: content
-SEVERITY: high
-PAGE: 1
-TITLE: 研究内容深度建议
-DESCRIPTION: 你选择的研究主题很有价值，但需要进一步深化研究内容。建议加强理论分析的深度，并提供更多的实证支持。
-SUGGESTION: 1）加强文献综述，展示对该领域研究现状的深入了解；2）明确研究假设和研究问题；3）详细描述研究方法和数据来源；4）提供更充分的数据分析和讨论；5）明确研究的理论贡献和实践意义。
-SELECTED: 无特定位置
----ANNOTATION---
-
----ANNOTATION---
-TYPE: praise
-SEVERITY: low
-PAGE: 1
-TITLE: 研究主题选择很好
-DESCRIPTION: 首先要肯定的是，你选择的研究主题很有现实意义和学术价值。这体现了你对学术前沿的敏感性和对实际问题的关注，这是做好学术研究的重要基础。
-SUGGESTION: 继续保持这种学术敏感性，可以进一步拓展研究的广度和深度。建议多关注国内外相关研究的最新进展，为你的研究提供更坚实的理论基础。
-SELECTED: 无特定位置
----ANNOTATION---`
-
-        setAutoAnnotationProgress(`AI服务暂时不可用，使用演示批注... (${(apiError as any).message})`)
-      }
+      // 2. 调用DeepSeek API
+      const apiResponse = await callDeepSeekAPI(pdfText)
 
       setAutoAnnotationProgress("正在解析批注结果...")
 
@@ -1062,8 +1101,8 @@ SELECTED: 无特定位置
             query: annotation.selected,
             returnFirst: true  // 不指定targetPage，搜索全部页面
           })
-          
-          if (location) {
+
+        if (location) {
             console.log(`✅ 在页面 ${location.pageIndex + 1} 找到文本，而不是AI建议的页面 ${annotation.page}`)
           }
         }
@@ -1199,11 +1238,7 @@ SELECTED: 无特定位置
       // 5. 添加到批注列表
       setAnnotations((prev) => [...prev, ...locatedAnnotations])
 
-      const statusMessage = usingFallback
-        ? `演示批注完成！共生成 ${locatedAnnotations.length} 条批注 (AI服务暂时不可用)`
-        : `AI批注完成！共生成 ${locatedAnnotations.length} 条批注`
-
-      setAutoAnnotationProgress(statusMessage)
+      setAutoAnnotationProgress(`AI批注完成！共生成 ${locatedAnnotations.length} 条批注`)
       
       // 显示调试面板，让用户查看定位结果
       if (currentDebugInfo.length > 0) {
@@ -1458,6 +1493,8 @@ SELECTED: 无特定位置
                             onClick={(e) => {
                               e.stopPropagation()
                               setSelectedAnnotation(annotation)
+                              // 自动滚动到对应的批注项
+                              scrollToAnnotationItem(annotation.id)
                             }}
                             title={annotation.aiAnnotation?.title || annotation.content}
                           />
@@ -1481,6 +1518,8 @@ SELECTED: 无特定位置
                             onClick={(e) => {
                               e.stopPropagation()
                               setSelectedAnnotation(annotation)
+                              // 自动滚动到对应的批注项
+                              scrollToAnnotationItem(annotation.id)
                             }}
                             title={annotation.aiAnnotation?.title || annotation.content}
                           />
@@ -1585,453 +1624,490 @@ SELECTED: 无特定位置
             <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
           </div>
         </div>
-        {/* 侧边栏内容保持不变 */}
-        {/* 搜索区域 */}
-        <Card className="m-4">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+        {/* 标签页内容 */}
+        <Tabs defaultValue="search" className="flex flex-col flex-1 m-4">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="search" className="flex items-center gap-2">
               <Search className="w-4 h-4" />
-              Search
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex gap-2">
-              <Input
-                placeholder="Search in PDF..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === "Enter") {
-                    searchText()
-                  }
-                }}
-              />
-              <Button onClick={() => searchText()} size="sm">
-                <Search className="w-4 h-4" />
-              </Button>
-            </div>
-
-            {searchResults.length > 0 && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm text-gray-600">{searchResults.length} results found</div>
-                  <Button size="sm" variant="outline" onClick={() => setShowCoordinates(!showCoordinates)}>
-                    <MapPin className="w-3 h-3 mr-1" />
-                    {showCoordinates ? "Hide" : "Show"} Coords
-                  </Button>
-                </div>
+              搜索
+            </TabsTrigger>
+            <TabsTrigger value="annotations" className="flex items-center gap-2">
+              <MessageSquare className="w-4 h-4" />
+              批注 ({annotations.length})
+            </TabsTrigger>
+          </TabsList>
+          
+          {/* 搜索标签页 */}
+          <TabsContent value="search" className="flex-1 space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Search className="w-4 h-4" />
+                  Search
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => goToSearchResult(currentSearchIndex - 1)}
-                    disabled={currentSearchIndex <= 0}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => goToSearchResult(currentSearchIndex + 1)}
-                    disabled={currentSearchIndex >= searchResults.length - 1}
-                  >
-                    Next
+                  <Input
+                    placeholder="Search in PDF..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === "Enter") {
+                        searchText()
+                      }
+                    }}
+                  />
+                  <Button onClick={() => searchText()} size="sm">
+                    <Search className="w-4 h-4" />
                   </Button>
                 </div>
-                <div className="max-h-40 overflow-y-auto space-y-1">
-                  {searchResults.map((result, index) => (
+
+                {searchResults.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-gray-600">{searchResults.length} results found</div>
+                      <Button size="sm" variant="outline" onClick={() => setShowCoordinates(!showCoordinates)}>
+                        <MapPin className="w-3 h-3 mr-1" />
+                        {showCoordinates ? "Hide" : "Show"} Coords
+                      </Button>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => goToSearchResult(currentSearchIndex - 1)}
+                        disabled={currentSearchIndex <= 0}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => goToSearchResult(currentSearchIndex + 1)}
+                        disabled={currentSearchIndex >= searchResults.length - 1}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                    <div className="max-h-40 overflow-y-auto space-y-1">
+                      {searchResults.map((result, index) => (
+                        <div
+                          key={index}
+                          className={`p-3 text-sm border rounded cursor-pointer transition-colors ${
+                            index === currentSearchIndex ? "bg-blue-100 border-blue-300" : "hover:bg-gray-50"
+                          }`}
+                          onClick={() => goToSearchResult(index)}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="font-medium text-blue-600">
+                              第 {result.pageIndex + 1} 页 第 {result.paragraphIndex} 段
+                            </div>
+                            <Badge variant="outline" className="text-xs">
+                              {index + 1}/{searchResults.length}
+                            </Badge>
+                          </div>
+                          <div className="text-gray-800 font-medium mb-1">"{result.text}"</div>
+                          <div className="text-gray-500 text-xs leading-relaxed mb-2">上下文: {result.context}</div>
+
+                          {showCoordinates && (
+                            <div className="bg-gray-50 p-2 rounded text-xs space-y-1 border-t">
+                              <div className="font-medium text-gray-700">坐标信息:</div>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <div className="font-medium text-blue-600">PDF坐标:</div>
+                                  <div>X: {result.coordinates.pdfCoordinates.x.toFixed(2)}</div>
+                                  <div>Y: {result.coordinates.pdfCoordinates.y.toFixed(2)}</div>
+                                </div>
+                                <div>
+                                  <div className="font-medium text-green-600">视口坐标:</div>
+                                  <div>X: {result.coordinates.viewportCoordinates.x.toFixed(2)}</div>
+                                  <div>Y: {result.coordinates.viewportCoordinates.y.toFixed(2)}</div>
+                                </div>
+                              </div>
+                              <div>
+                                <div className="font-medium text-purple-600">相对位置:</div>
+                                <div>X: {result.coordinates.relativePosition.xPercent}%</div>
+                                <div>Y: {result.coordinates.relativePosition.yPercent}%</div>
+                              </div>
+                              <div>
+                                <div className="font-medium text-orange-600">尺寸:</div>
+                                <div>W: {result.coordinates.pdfCoordinates.width.toFixed(2)}</div>
+                                <div>H: {result.coordinates.pdfCoordinates.height.toFixed(2)}</div>
+                              </div>
+                              <div>
+                                <div className="font-medium text-red-600">变换矩阵:</div>
+                                <div className="text-xs font-mono">
+                                  [{result.coordinates.transform.map((t) => t.toFixed(1)).join(", ")}]
+                                </div>
+                              </div>
+                              <div>
+                                <div className="font-medium text-indigo-600">页面尺寸:</div>
+                                <div>
+                                  {result.coordinates.pageSize.width.toFixed(0)} ×{" "}
+                                  {result.coordinates.pageSize.height.toFixed(0)}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 调试信息面板 */}
+            {showDebugPanel && debugInfo.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    <MapPin className="w-4 h-4" />
+                    文本定位调试信息
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 max-h-64 overflow-y-auto">
+                  {debugInfo.map((info, index) => (
                     <div
                       key={index}
-                      className={`p-3 text-sm border rounded cursor-pointer transition-colors ${
-                        index === currentSearchIndex ? "bg-blue-100 border-blue-300" : "hover:bg-gray-50"
+                      className={`p-3 border rounded-lg text-xs ${
+                        info.found
+                          ? "bg-green-50 border-green-200"
+                          : "bg-red-50 border-red-200"
                       }`}
-                      onClick={() => goToSearchResult(index)}
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="font-medium text-blue-600">
-                          第 {result.pageIndex + 1} 页 第 {result.paragraphIndex} 段
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="font-medium text-gray-800">
+                          {info.found ? "✅ 找到" : "❌ 未找到"}
                         </div>
-                        <Badge variant="outline" className="text-xs">
-                          {index + 1}/{searchResults.length}
-                        </Badge>
+                        <div className="flex gap-1">
+                          <Badge variant="outline" className="text-xs">
+                            AI建议: 页面 {info.page}
+                          </Badge>
+                          {info.found && info.actualPage && info.actualPage !== info.page && (
+                            <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700">
+                              实际: 页面 {info.actualPage}
+                            </Badge>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-gray-800 font-medium mb-1">"{result.text}"</div>
-                      <div className="text-gray-500 text-xs leading-relaxed mb-2">上下文: {result.context}</div>
+                      
+                      {info.searchStrategy && (
+                        <div className="mb-2 p-2 bg-blue-50 rounded text-xs">
+                          <div className="font-medium text-blue-700 mb-1">搜索策略:</div>
+                          <div className="text-blue-600">{info.searchStrategy}</div>
+                        </div>
+                      )}
+                      
+                      <div className="mb-2">
+                        <div className="font-medium text-gray-600 mb-1">查找文本:</div>
+                        <div className="bg-white p-2 rounded border text-gray-800">
+                          "{info.text}"
+                        </div>
+                      </div>
 
-                      {showCoordinates && (
-                        <div className="bg-gray-50 p-2 rounded text-xs space-y-1 border-t">
-                          <div className="font-medium text-gray-700">坐标信息:</div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
+                      {info.found && info.coordinates ? (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-2 gap-2">
                             <div>
-                              <div className="font-medium text-blue-600">PDF坐标:</div>
-                              <div>X: {result.coordinates.pdfCoordinates.x.toFixed(2)}</div>
-                              <div>Y: {result.coordinates.pdfCoordinates.y.toFixed(2)}</div>
+                              <div className="font-medium text-blue-600">视口坐标:</div>
+                              <div>X: {info.coordinates.viewport.x}</div>
+                              <div>Y: {info.coordinates.viewport.y}</div>
                             </div>
                             <div>
-                              <div className="font-medium text-green-600">视口坐标:</div>
-                              <div>X: {result.coordinates.viewportCoordinates.x.toFixed(2)}</div>
-                              <div>Y: {result.coordinates.viewportCoordinates.y.toFixed(2)}</div>
+                              <div className="font-medium text-green-600">PDF坐标:</div>
+                              <div>X: {info.coordinates.pdf.x}</div>
+                              <div>Y: {info.coordinates.pdf.y}</div>
                             </div>
                           </div>
-                          <div>
-                            <div className="font-medium text-purple-600">相对位置:</div>
-                            <div>X: {result.coordinates.relativePosition.xPercent}%</div>
-                            <div>Y: {result.coordinates.relativePosition.yPercent}%</div>
-                          </div>
-                          <div>
-                            <div className="font-medium text-orange-600">尺寸:</div>
-                            <div>W: {result.coordinates.pdfCoordinates.width.toFixed(2)}</div>
-                            <div>H: {result.coordinates.pdfCoordinates.height.toFixed(2)}</div>
-                          </div>
-                          <div>
-                            <div className="font-medium text-red-600">变换矩阵:</div>
-                            <div className="text-xs font-mono">
-                              [{result.coordinates.transform.map((t) => t.toFixed(1)).join(", ")}]
-                            </div>
-                          </div>
-                          <div>
-                            <div className="font-medium text-indigo-600">页面尺寸:</div>
+                          <div className="grid grid-cols-2 gap-2">
                             <div>
-                              {result.coordinates.pageSize.width.toFixed(0)} ×{" "}
-                              {result.coordinates.pageSize.height.toFixed(0)}
+                              <div className="font-medium text-purple-600">尺寸:</div>
+                              <div>W: {info.coordinates.size.w}</div>
+                              <div>H: {info.coordinates.size.h}</div>
+                            </div>
+                            <div>
+                              <div className="font-medium text-orange-600">页面尺寸:</div>
+                              <div>{info.coordinates.pageSize.w} × {info.coordinates.pageSize.h}</div>
                             </div>
                           </div>
+                        </div>
+                      ) : (
+                        info.fallbackCoordinates && (
+                          <div>
+                            <div className="font-medium text-red-600">默认位置:</div>
+                            <div>X: {info.fallbackCoordinates.x}, Y: {info.fallbackCoordinates.y}</div>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  ))}
+                  
+                  <div className="mt-4 p-2 bg-gray-100 rounded text-xs">
+                    <div className="font-medium text-gray-700">统计信息:</div>
+                    <div>总计: {debugInfo.length} 个批注</div>
+                    <div>成功定位: {debugInfo.filter(info => info.found).length} 个</div>
+                    <div>使用默认位置: {debugInfo.filter(info => !info.found).length} 个</div>
+                    <div className="mt-2 border-t pt-2">
+                      <div className="font-medium text-blue-700">搜索详情:</div>
+                      <div>指定页面直接找到: {debugInfo.filter(info => info.found && info.actualPage === info.page).length} 个</div>
+                      <div>全页面搜索找到: {debugInfo.filter(info => info.found && info.actualPage !== info.page).length} 个</div>
+                      <div>完全未找到: {debugInfo.filter(info => !info.found).length} 个</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+
+          {/* 批注标签页 */}
+          <TabsContent value="annotations" className="flex-1 flex flex-col">
+            <Card className="flex-1 flex flex-col">
+              <CardHeader className="flex-shrink-0">
+                <CardTitle className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4" />
+                  Annotations ({annotations.length})
+                </CardTitle>
+                {annotations.length > 0 && (
+                  <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                    <span>📖</span>
+                    <span>已按PDF内容顺序排列</span>
+                  </div>
+                )}
+              </CardHeader>
+              <CardContent className="p-1 flex-1 flex flex-col space-y-2">
+                <div className="space-y-2 flex-shrink-0">
+                  <Button
+                    onClick={() => setIsAddingAnnotation(!isAddingAnnotation)}
+                    variant={isAddingAnnotation ? "default" : "outline"}
+                    className="w-full"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    {isAddingAnnotation ? "Cancel Adding" : "Add Manual Annotation"}
+                  </Button>
+
+                  {isAddingAnnotation && (
+                    <div className="space-y-2">
+                      <Textarea
+                        placeholder="Enter annotation content..."
+                        value={newAnnotationContent}
+                        onChange={(e) => setNewAnnotationContent(e.target.value)}
+                        rows={3}
+                      />
+                      <div className="text-sm text-gray-600">Click on the PDF to place the annotation</div>
+                    </div>
+                  )}
+                </div>
+
+                <div ref={annotationPanelRef} className="space-y-3 flex-1 overflow-y-auto max-h-[calc(100vh-250px)]">
+                  {sortAnnotations(annotations).map((annotation) => (
+                    <div
+                      key={annotation.id}
+                      ref={(el) => {
+                        if (el) {
+                          annotationItemRefs.current.set(annotation.id, el)
+                        } else {
+                          annotationItemRefs.current.delete(annotation.id)
+                        }
+                      }}
+                      className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                        selectedAnnotation?.id === annotation.id
+                          ? "bg-blue-50 border-blue-300"
+                          : "hover:bg-gray-50 border-gray-200"
+                      }`}
+                      onClick={() => {
+                        setSelectedAnnotation(annotation)
+                        // 当在批注面板中点击批注项时，也滚动到对应的PDF位置
+                        const pageElement = document.getElementById(`page-${annotation.pageIndex + 1}`)
+                        if (pageElement) {
+                          pageElement.scrollIntoView({ behavior: "smooth", block: "center" })
+                        }
+                      }}
+                    >
+                      {/* 基本信息 */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs">
+                            Page {annotation.pageIndex + 1}
+                          </Badge>
+                          {annotation.aiAnnotation && (
+                            <>
+                              <Badge
+                                variant="outline"
+                                className={`text-xs ${
+                                  annotation.aiAnnotation.severity === "high"
+                                    ? "bg-red-50 text-red-700"
+                                    : annotation.aiAnnotation.severity === "medium"
+                                      ? "bg-yellow-50 text-yellow-700"
+                                      : "bg-green-50 text-green-700"
+                                }`}
+                              >
+                                {annotation.aiAnnotation.severity}
+                              </Badge>
+                              <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700">
+                                {annotation.aiAnnotation.annotationType}
+                              </Badge>
+                            </>
+                          )}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setAnnotations((prev) => prev.filter((a) => a.id !== annotation.id))
+                          }}
+                          className="text-red-500 hover:text-red-700 h-6 w-6 p-0"
+                        >
+                          ×
+                        </Button>
+                      </div>
+
+                      {annotation.aiAnnotation ? (
+                        /* AI批注详细信息 */
+                        <div className="space-y-3">
+                          {/* 选中文字 */}
+                          {annotation.aiAnnotation.selectedText &&
+                            annotation.aiAnnotation.selectedText !== "无特定位置" && (
+                              <div>
+                                <div className="text-xs font-medium text-gray-600 mb-1">选中文字:</div>
+                                <div className="text-sm bg-yellow-50 p-2 rounded border-l-2 border-yellow-400">
+                                  "{annotation.aiAnnotation.selectedText}"
+                                </div>
+                              </div>
+                            )}
+
+                          {/* 标题 */}
+                          <div>
+                            <div className="text-xs font-medium text-gray-600 mb-1">批注标题:</div>
+                            <div className="text-sm font-medium text-gray-800">{annotation.aiAnnotation.title}</div>
+                          </div>
+
+                          {/* 存在问题 - 可编辑 */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="text-xs font-medium text-gray-600">存在问题:</div>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (editingAnnotation === annotation.id) {
+                                    // 保存编辑
+                                    setAnnotations((prev) =>
+                                      prev.map((a) =>
+                                        a.id === annotation.id
+                                          ? {
+                                              ...a,
+                                              aiAnnotation: {
+                                                ...a.aiAnnotation!,
+                                                description: editingDescription,
+                                              },
+                                            }
+                                          : a,
+                                      ),
+                                    )
+                                    setEditingAnnotation(null)
+                                  } else {
+                                    // 开始编辑
+                                    setEditingAnnotation(annotation.id)
+                                    setEditingDescription(annotation.aiAnnotation?.description || "")
+                                  }
+                                }}
+                                className="h-6 text-xs"
+                              >
+                                {editingAnnotation === annotation.id ? "保存" : "编辑"}
+                              </Button>
+                            </div>
+                            {editingAnnotation === annotation.id ? (
+                              <Textarea
+                                value={editingDescription}
+                                onChange={(e) => setEditingDescription(e.target.value)}
+                                className="text-sm"
+                                rows={3}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <div className="text-sm text-gray-700 bg-red-50 p-2 rounded border-l-2 border-red-400">
+                                {annotation.aiAnnotation.description}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 修改建议 - 可编辑 */}
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="text-xs font-medium text-gray-600">修改建议:</div>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (editingAnnotation === `${annotation.id}-suggestion`) {
+                                    // 保存编辑
+                                    setAnnotations((prev) =>
+                                      prev.map((a) =>
+                                        a.id === annotation.id
+                                          ? {
+                                              ...a,
+                                              aiAnnotation: {
+                                                ...a.aiAnnotation!,
+                                                suggestion: editingSuggestion,
+                                              },
+                                            }
+                                          : a,
+                                      ),
+                                    )
+                                    setEditingAnnotation(null)
+                                  } else {
+                                    // 开始编辑
+                                    setEditingAnnotation(`${annotation.id}-suggestion`)
+                                    setEditingSuggestion(annotation.aiAnnotation?.suggestion || "")
+                                  }
+                                }}
+                                className="h-6 text-xs"
+                              >
+                                {editingAnnotation === `${annotation.id}-suggestion` ? "保存" : "编辑"}
+                              </Button>
+                            </div>
+                            {editingAnnotation === `${annotation.id}-suggestion` ? (
+                              <Textarea
+                                value={editingSuggestion}
+                                onChange={(e) => setEditingSuggestion(e.target.value)}
+                                className="text-sm"
+                                rows={3}
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <div className="text-sm text-gray-700 bg-green-50 p-2 rounded border-l-2 border-green-400">
+                                {annotation.aiAnnotation.suggestion}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        /* 手动批注 */
+                        <div>
+                          <div className="text-xs font-medium text-gray-600 mb-1">手动批注:</div>
+                          <div className="text-sm text-gray-700">{annotation.content}</div>
                         </div>
                       )}
                     </div>
                   ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
 
-        {/* 调试信息面板 */}
-        {showDebugPanel && debugInfo.length > 0 && (
-          <Card className="m-4">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm">
-                <MapPin className="w-4 h-4" />
-                文本定位调试信息
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 max-h-64 overflow-y-auto">
-              {debugInfo.map((info, index) => (
-                <div
-                  key={index}
-                  className={`p-3 border rounded-lg text-xs ${
-                    info.found
-                      ? "bg-green-50 border-green-200"
-                      : "bg-red-50 border-red-200"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="font-medium text-gray-800">
-                      {info.found ? "✅ 找到" : "❌ 未找到"}
-                    </div>
-                    <div className="flex gap-1">
-                      <Badge variant="outline" className="text-xs">
-                        AI建议: 页面 {info.page}
-                      </Badge>
-                      {info.found && info.actualPage && info.actualPage !== info.page && (
-                        <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700">
-                          实际: 页面 {info.actualPage}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {info.searchStrategy && (
-                    <div className="mb-2 p-2 bg-blue-50 rounded text-xs">
-                      <div className="font-medium text-blue-700 mb-1">搜索策略:</div>
-                      <div className="text-blue-600">{info.searchStrategy}</div>
-                    </div>
-                  )}
-                  
-                  <div className="mb-2">
-                    <div className="font-medium text-gray-600 mb-1">查找文本:</div>
-                    <div className="bg-white p-2 rounded border text-gray-800">
-                      "{info.text}"
-                    </div>
-                  </div>
-
-                  {info.found && info.coordinates ? (
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <div className="font-medium text-blue-600">视口坐标:</div>
-                          <div>X: {info.coordinates.viewport.x}</div>
-                          <div>Y: {info.coordinates.viewport.y}</div>
-                        </div>
-                        <div>
-                          <div className="font-medium text-green-600">PDF坐标:</div>
-                          <div>X: {info.coordinates.pdf.x}</div>
-                          <div>Y: {info.coordinates.pdf.y}</div>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <div className="font-medium text-purple-600">尺寸:</div>
-                          <div>W: {info.coordinates.size.w}</div>
-                          <div>H: {info.coordinates.size.h}</div>
-                        </div>
-                        <div>
-                          <div className="font-medium text-orange-600">页面尺寸:</div>
-                          <div>{info.coordinates.pageSize.w} × {info.coordinates.pageSize.h}</div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    info.fallbackCoordinates && (
-                      <div>
-                        <div className="font-medium text-red-600">默认位置:</div>
-                        <div>X: {info.fallbackCoordinates.x}, Y: {info.fallbackCoordinates.y}</div>
-                      </div>
-                    )
-                  )}
-                </div>
-              ))}
-              
-              <div className="mt-4 p-2 bg-gray-100 rounded text-xs">
-                <div className="font-medium text-gray-700">统计信息:</div>
-                <div>总计: {debugInfo.length} 个批注</div>
-                <div>成功定位: {debugInfo.filter(info => info.found).length} 个</div>
-                <div>使用默认位置: {debugInfo.filter(info => !info.found).length} 个</div>
-                <div className="mt-2 border-t pt-2">
-                  <div className="font-medium text-blue-700">搜索详情:</div>
-                  <div>指定页面直接找到: {debugInfo.filter(info => info.found && info.actualPage === info.page).length} 个</div>
-                  <div>全页面搜索找到: {debugInfo.filter(info => info.found && info.actualPage !== info.page).length} 个</div>
-                  <div>完全未找到: {debugInfo.filter(info => !info.found).length} 个</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* 注释区域 */}
-        <Card className="m-4 flex-1">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MessageSquare className="w-4 h-4" />
-              Annotations ({annotations.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Button
-                onClick={() => setIsAddingAnnotation(!isAddingAnnotation)}
-                variant={isAddingAnnotation ? "default" : "outline"}
-                className="w-full"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                {isAddingAnnotation ? "Cancel Adding" : "Add Manual Annotation"}
-              </Button>
-
-              {isAddingAnnotation && (
-                <div className="space-y-2">
-                  <Textarea
-                    placeholder="Enter annotation content..."
-                    value={newAnnotationContent}
-                    onChange={(e) => setNewAnnotationContent(e.target.value)}
-                    rows={3}
-                  />
-                  <div className="text-sm text-gray-600">Click on the PDF to place the annotation</div>
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {annotations.map((annotation) => (
-                <div
-                  key={annotation.id}
-                  className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                    selectedAnnotation?.id === annotation.id
-                      ? "bg-blue-50 border-blue-300"
-                      : "hover:bg-gray-50 border-gray-200"
-                  }`}
-                  onClick={() => setSelectedAnnotation(annotation)}
-                >
-                  {/* 基本信息 */}
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs">
-                        Page {annotation.pageIndex + 1}
-                      </Badge>
-                      {annotation.aiAnnotation && (
-                        <>
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${
-                              annotation.aiAnnotation.severity === "high"
-                                ? "bg-red-50 text-red-700"
-                                : annotation.aiAnnotation.severity === "medium"
-                                  ? "bg-yellow-50 text-yellow-700"
-                                  : "bg-green-50 text-green-700"
-                            }`}
-                          >
-                            {annotation.aiAnnotation.severity}
-                          </Badge>
-                          <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700">
-                            {annotation.aiAnnotation.annotationType}
-                          </Badge>
-                        </>
-                      )}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setAnnotations((prev) => prev.filter((a) => a.id !== annotation.id))
-                      }}
-                      className="text-red-500 hover:text-red-700 h-6 w-6 p-0"
-                    >
-                      ×
-                    </Button>
-                  </div>
-
-                  {annotation.aiAnnotation ? (
-                    /* AI批注详细信息 */
-                    <div className="space-y-3">
-                      {/* 选中文字 */}
-                      {annotation.aiAnnotation.selectedText &&
-                        annotation.aiAnnotation.selectedText !== "无特定位置" && (
-                          <div>
-                            <div className="text-xs font-medium text-gray-600 mb-1">选中文字:</div>
-                            <div className="text-sm bg-yellow-50 p-2 rounded border-l-2 border-yellow-400">
-                              "{annotation.aiAnnotation.selectedText}"
-                            </div>
-                          </div>
-                        )}
-
-                      {/* 标题 */}
-                      <div>
-                        <div className="text-xs font-medium text-gray-600 mb-1">批注标题:</div>
-                        <div className="text-sm font-medium text-gray-800">{annotation.aiAnnotation.title}</div>
-                      </div>
-
-                      {/* 存在问题 - 可编辑 */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="text-xs font-medium text-gray-600">存在问题:</div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (editingAnnotation === annotation.id) {
-                                // 保存编辑
-                                setAnnotations((prev) =>
-                                  prev.map((a) =>
-                                    a.id === annotation.id
-                                      ? {
-                                          ...a,
-                                          aiAnnotation: {
-                                            ...a.aiAnnotation!,
-                                            description: editingDescription,
-                                          },
-                                        }
-                                      : a,
-                                  ),
-                                )
-                                setEditingAnnotation(null)
-                              } else {
-                                // 开始编辑
-                                setEditingAnnotation(annotation.id)
-                                setEditingDescription(annotation.aiAnnotation?.description || "")
-                              }
-                            }}
-                            className="h-6 text-xs"
-                          >
-                            {editingAnnotation === annotation.id ? "保存" : "编辑"}
-                          </Button>
-                        </div>
-                        {editingAnnotation === annotation.id ? (
-                          <Textarea
-                            value={editingDescription}
-                            onChange={(e) => setEditingDescription(e.target.value)}
-                            className="text-sm"
-                            rows={3}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        ) : (
-                          <div className="text-sm text-gray-700 bg-red-50 p-2 rounded border-l-2 border-red-400">
-                            {annotation.aiAnnotation.description}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 修改建议 - 可编辑 */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="text-xs font-medium text-gray-600">修改建议:</div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (editingAnnotation === `${annotation.id}-suggestion`) {
-                                // 保存编辑
-                                setAnnotations((prev) =>
-                                  prev.map((a) =>
-                                    a.id === annotation.id
-                                      ? {
-                                          ...a,
-                                          aiAnnotation: {
-                                            ...a.aiAnnotation!,
-                                            suggestion: editingSuggestion,
-                                          },
-                                        }
-                                      : a,
-                                  ),
-                                )
-                                setEditingAnnotation(null)
-                              } else {
-                                // 开始编辑
-                                setEditingAnnotation(`${annotation.id}-suggestion`)
-                                setEditingSuggestion(annotation.aiAnnotation?.suggestion || "")
-                              }
-                            }}
-                            className="h-6 text-xs"
-                          >
-                            {editingAnnotation === `${annotation.id}-suggestion` ? "保存" : "编辑"}
-                          </Button>
-                        </div>
-                        {editingAnnotation === `${annotation.id}-suggestion` ? (
-                          <Textarea
-                            value={editingSuggestion}
-                            onChange={(e) => setEditingSuggestion(e.target.value)}
-                            className="text-sm"
-                            rows={3}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        ) : (
-                          <div className="text-sm text-gray-700 bg-green-50 p-2 rounded border-l-2 border-green-400">
-                            {annotation.aiAnnotation.suggestion}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    /* 手动批注 */
-                    <div>
-                      <div className="text-xs font-medium text-gray-600 mb-1">手动批注:</div>
-                      <div className="text-sm text-gray-700">{annotation.content}</div>
+                  {annotations.length === 0 && (
+                    <div className="text-center text-gray-500 py-8">
+                      <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                      <div className="text-sm">暂无批注</div>
+                      <div className="text-xs">点击"AI自动批注"开始分析</div>
                     </div>
                   )}
                 </div>
-              ))}
-
-              {annotations.length === 0 && (
-                <div className="text-center text-gray-500 py-8">
-                  <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <div className="text-sm">暂无批注</div>
-                  <div className="text-xs">点击"AI自动批注"开始分析</div>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   )
