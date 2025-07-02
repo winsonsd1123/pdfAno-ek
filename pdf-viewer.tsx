@@ -301,22 +301,31 @@ export default function PDFViewer() {
   useEffect(() => {
     const loadPdfJs = async () => {
       try {
-        // Load PDF.js from CDN to ensure version consistency
+        // Load PDF.js 5.3.31 ES module from CDN
         const script = document.createElement("script")
-        script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
-        script.onload = async () => {
-          // Access PDF.js from global window object
-          const pdfjsLib = (window as any).pdfjsLib
-
+        script.type = "module"
+        script.innerHTML = `
+          import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/pdf.min.mjs';
+          
           // Set worker with matching version
-          pdfjsLib.GlobalWorkerOptions.workerSrc =
-            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
-
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/pdf.worker.min.mjs';
+          
+          // Make pdfjsLib available globally
+          window.pdfjsLib = pdfjsLib;
+          
+          // Dispatch a custom event to signal that PDF.js is loaded
+          window.dispatchEvent(new CustomEvent('pdfjsLoaded'));
+        `
+        
+        // Listen for the custom event
+        const handlePdfjsLoaded = async () => {
           try {
+            const pdfjsLib = (window as any).pdfjsLib
+
             // Load PDF document
             const loadingTask = pdfjsLib.getDocument({
               url: PDF_URL,
-              cMapUrl: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/",
+              cMapUrl: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/cmaps/",
               cMapPacked: true,
             })
 
@@ -331,6 +340,9 @@ export default function PDFViewer() {
           }
         }
 
+        // Add event listener
+        window.addEventListener('pdfjsLoaded', handlePdfjsLoaded, { once: true })
+
         script.onerror = () => {
           console.error("Error loading PDF.js library")
           setError("Failed to load PDF.js library")
@@ -341,6 +353,7 @@ export default function PDFViewer() {
 
         // Cleanup function
         return () => {
+          window.removeEventListener('pdfjsLoaded', handlePdfjsLoaded)
           if (document.head.contains(script)) {
             document.head.removeChild(script)
           }
@@ -517,11 +530,16 @@ export default function PDFViewer() {
 
               // PDF原始坐标系统 (左下角为原点)
               const pdfX = transform[4]
-              const pdfY = transform[5]
+              const pdfY = transform[5] // 这是文字基线位置
 
-              // 视口坐标系统 (左上角为原点) - 修正计算方法
+              // 修正Y坐标计算 - 考虑文字高度，让标注框覆盖整个文字
+              // transform[5]是基线位置，需要向上偏移文字高度来获得文字顶部
+              const textHeight = item.height
+              const pdfYTop = pdfY + textHeight // PDF坐标系中，向上偏移是加法
+
+              // 视口坐标系统 (左上角为原点) - 使用文字顶部位置
               const viewportX = pdfX
-              const viewportY = viewport.height - pdfY
+              const viewportY = viewport.height - pdfYTop // 转换到视口坐标系
 
               // 计算相对位置百分比
               const xPercent = (pdfX / viewport.width) * 100
@@ -542,20 +560,20 @@ export default function PDFViewer() {
                 paragraphIndex: paragraphIndex + 1,
       text: customText || item.str,
                 x: viewportX, // 使用视口坐标作为显示坐标
-                y: viewportY, // 使用视口坐标作为显示坐标
+                y: viewportY, // 使用修正后的视口坐标（文字顶部）
                 width: item.width,
                 height: item.height,
                 context: context.length > 100 ? context.substring(0, 100) + "..." : context,
                 coordinates: {
                   pdfCoordinates: {
                     x: pdfX,
-                    y: pdfY,
+                    y: pdfY, // 保留原始基线位置用于参考
                     width: item.width,
                     height: item.height,
                   },
                   viewportCoordinates: {
                     x: viewportX,
-                    y: viewportY,
+                    y: viewportY, // 使用文字顶部位置
                     width: item.width,
                     height: item.height,
                   },
@@ -1476,15 +1494,16 @@ ${pdfText}`
                         const highlightX = annotation.coordinates.viewportCoordinates.x * scaleRatio
                         const highlightY = annotation.coordinates.viewportCoordinates.y * scaleRatio
                         const highlightWidth = annotation.coordinates.viewportCoordinates.width * scaleRatio
-                        const highlightHeight = annotation.coordinates.viewportCoordinates.height * scaleRatio
+                        // 增加标注框的高度，确保完全覆盖文字
+                        const highlightHeight = (annotation.coordinates.viewportCoordinates.height * scaleRatio) * 1.2
 
                         return (
                           <div
                             key={annotation.id}
                             className={`absolute border-2 rounded cursor-pointer transition-colors ${
                               annotation.type === "highlight"
-                                ? "bg-yellow-200 bg-opacity-50 border-yellow-400 hover:bg-yellow-300"
-                                : "bg-blue-200 bg-opacity-50 border-blue-400 hover:bg-blue-300"
+                                ? "bg-yellow-200 bg-opacity-30 border-red-400 hover:bg-yellow-300 hover:bg-opacity-40"
+                                : "bg-blue-200 bg-opacity-30 border-red-400 hover:bg-blue-300 hover:bg-opacity-40"
                             } ${selectedAnnotation?.id === annotation.id ? "ring-2 ring-blue-500" : ""}`}
                             style={{
                               left: `${(highlightX / currentViewport.width) * 100}%`,
@@ -1508,8 +1527,8 @@ ${pdfText}`
                             key={annotation.id}
                             className={`absolute border-2 rounded cursor-pointer transition-colors ${
                               annotation.type === "highlight"
-                                ? "bg-yellow-200 bg-opacity-50 border-yellow-400 hover:bg-yellow-300"
-                                : "bg-blue-200 bg-opacity-50 border-blue-400 hover:bg-blue-300"
+                                ? "bg-yellow-200 bg-opacity-30 border-red-400 hover:bg-yellow-300 hover:bg-opacity-40"
+                                : "bg-blue-200 bg-opacity-30 border-red-400 hover:bg-blue-300 hover:bg-opacity-40"
                             } ${selectedAnnotation?.id === annotation.id ? "ring-2 ring-blue-500" : ""}`}
                             style={{
                               left: `${(annotation.x / (pageRefs.current.get(pageNumber)?.width || 1)) * 100}%`,
@@ -1547,13 +1566,14 @@ ${pdfText}`
                       const highlightX = result.coordinates.viewportCoordinates.x * scaleRatio
                       const highlightY = result.coordinates.viewportCoordinates.y * scaleRatio
                       const highlightWidth = result.coordinates.viewportCoordinates.width * scaleRatio
-                      const highlightHeight = result.coordinates.viewportCoordinates.height * scaleRatio
+                      // 增加标注框的高度，确保完全覆盖文字
+                      const highlightHeight = (result.coordinates.viewportCoordinates.height * scaleRatio) * 1.2
 
                       return (
                         <div
                           key={resultIndex}
                           className={`absolute pointer-events-none ${
-                            isCurrentResult ? "bg-yellow-300 border-yellow-500" : "bg-yellow-200 border-yellow-400"
+                            isCurrentResult ? "bg-yellow-300 bg-opacity-40 border-red-500" : "bg-yellow-200 bg-opacity-30 border-red-400"
                           } border-2`}
                           style={{
                             left: `${(highlightX / currentViewport.width) * 100}%`,
