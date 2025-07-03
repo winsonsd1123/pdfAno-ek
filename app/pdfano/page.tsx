@@ -2,11 +2,12 @@
 
 import type React from "react"
 import { useState, useEffect, useRef, useCallback } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, MessageSquare, ZoomIn, ZoomOut, MapPin } from "lucide-react"
+import { Search, Plus, MessageSquare, ZoomIn, ZoomOut, MapPin, FileText } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 
@@ -131,10 +132,16 @@ interface Annotation {
   }
 }
 
-const PDF_URL =
-  "https://xpzbccdjc5ty6al1.public.blob.vercel-storage.com/advertisement-computing-rrttEVTmdSQcWy9D17QnNq77h49KFV.pdf"
-
-export default function PDFViewer() {
+export default function PdfAnoPage() {
+  const searchParams = useSearchParams()
+  
+  // 从URL参数获取文档信息
+  const docUrl = searchParams.get('url')
+  const docName = searchParams.get('name') || 'Unknown Document'
+  const docId = searchParams.get('docId')
+  
+  // 如果没有提供URL，使用默认的PDF
+  const PDF_URL = docUrl || "https://xpzbccdjc5ty6al1.public.blob.vercel-storage.com/advertisement-computing-rrttEVTmdSQcWy9D17QnNq77h49KFV.pdf"
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [numPages, setNumPages] = useState(0)
   const [scale, setScale] = useState(1.5)
@@ -1387,6 +1394,12 @@ ${pdfText}`
         {/* 工具栏 */}
         <div className="bg-white border-b border-gray-200 p-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-gray-700" />
+              <span className="font-medium text-gray-900 max-w-xs truncate" title={docName}>
+                {docName}
+              </span>
+            </div>
             <Badge variant="outline">{numPages} pages</Badge>
             <Badge variant="outline">Scale: {Math.round(scale * 100)}%</Badge>
             {mouseCoordinates && (
