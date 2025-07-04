@@ -10,6 +10,16 @@ import { Badge } from "@/components/ui/badge"
 import { Search, Plus, MessageSquare, ZoomIn, ZoomOut, MapPin, FileText } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { 
+  mergeAnnotationContent, 
+  addDefaultAuthorInfo, 
+  getCurrentTimestamp,
+  formatTimestamp,
+  type AnnotationRole 
+} from "@/lib/annotation-utils"
+import { AnnotationBubble, AnnotationContent, AnnotationHeader, AnnotationBody } from "@/components/ui/annotation-bubble"
+import { AnnotationIcon, AnnotationAuthorName } from "@/components/ui/annotation-icon"
+import { QuotedText } from "@/components/ui/quoted-text"
 
 // PDF.js types
 interface PDFDocumentProxy {
@@ -93,26 +103,55 @@ interface SearchResult {
   }
 }
 
+interface AnnotationReply {
+  id: string
+  author: {
+    name: string
+    role: "AI助手" | "手动批注者" | "导师" | "同学"
+    avatar?: string
+    color: string
+  }
+  content: string
+  timestamp: string
+  // 新增：编辑状态
+  isEditing?: boolean
+}
+
 interface Annotation {
   id: string
   pageIndex: number
-  x: number
-  y: number
-  width: number
-  height: number
+  // 标记为deprecated，但保留以支持迁移
+  x?: number
+  y?: number
+  width?: number
+  height?: number
   content: string
   type: "highlight" | "note"
-  // 添加AI批注的详细信息
+  // 新增字段
+  author: {
+    name: string
+    role: "AI助手" | "手动批注者" | "导师" | "同学"
+    avatar?: string
+    color: string
+  }
+  timestamp: string
+  isExpanded?: boolean // 控制展开/折叠状态
+  // 修改AI批注结构
   aiAnnotation?: {
     selectedText: string
-    title: string
-    description: string
-    suggestion: string
-    annotationType: string
-    severity: string
+    mergedContent: string // 合并后的教师点评风格内容
+    originalData: {
+      title: string
+      description: string
+      suggestion: string
+      annotationType: string
+      severity: string
+    }
   }
-  // 添加坐标信息，与搜索结果保持一致
-  coordinates?: {
+  // 新增：批注回复
+  replies?: AnnotationReply[]
+  // 统一的坐标信息 - 现在是必需字段
+  coordinates: {
     pdfCoordinates: {
       x: number
       y: number
@@ -130,6 +169,8 @@ interface Annotation {
       height: number
     }
   }
+  // 新增：编辑状态
+  isEditing?: boolean
 }
 
 export default function PdfAnoPage() {
@@ -149,8 +190,6 @@ export default function PdfAnoPage() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [currentSearchIndex, setCurrentSearchIndex] = useState(-1)
   const [annotations, setAnnotations] = useState<Annotation[]>([])
-  const [isAddingAnnotation, setIsAddingAnnotation] = useState(false)
-  const [newAnnotationContent, setNewAnnotationContent] = useState("")
   const [selectedAnnotation, setSelectedAnnotation] = useState<Annotation | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -161,7 +200,13 @@ export default function PdfAnoPage() {
     viewportCoords: { x: number; y: number }
     pageSize: { width: number; height: number }
   } | null>(null)
-  const [panelWidth, setPanelWidth] = useState(320) // 默认320px宽度
+  const [panelWidth, setPanelWidth] = useState(() => {
+    // 初始化时设置为最大宽度(600px或窗口宽度的50%中的较小值)
+    if (typeof window !== 'undefined') {
+      return Math.min(600, window.innerWidth * 0.5);
+    }
+    return 600; // 服务器端渲染时的默认值
+  })
   const [isResizing, setIsResizing] = useState(false)
   const [isAutoAnnotating, setIsAutoAnnotating] = useState(false)
   const [autoAnnotationProgress, setAutoAnnotationProgress] = useState("")
@@ -184,6 +229,7 @@ export default function PdfAnoPage() {
   }>>([])
   const [showDebugPanel, setShowDebugPanel] = useState(false)
   const [activeTab, setActiveTab] = useState("search")
+  const [editingContent, setEditingContent] = useState("")
 
   const containerRef = useRef<HTMLDivElement>(null)
   const pageRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -207,25 +253,18 @@ export default function PdfAnoPage() {
       }
       
       // 在同一页面内，按Y坐标排序（从上到下）
-      // 优先使用PDF.js的坐标信息
+      // 优先使用统一的coordinates信息
       if (a.coordinates && b.coordinates) {
         // 使用PDF坐标系统的Y坐标进行排序（PDF坐标系是从下往上的，所以较大的Y值在上方）
         return b.coordinates.pdfCoordinates.y - a.coordinates.pdfCoordinates.y
       }
       
-      // 回退到视口坐标（视口坐标系是从上往下的，所以较小的Y值在上方）
-      if (a.coordinates && !b.coordinates) {
-        // 如果只有a有坐标信息，转换为可比较的格式
-        return a.coordinates.viewportCoordinates.y - a.y
-      }
-      
-      if (!a.coordinates && b.coordinates) {
-        // 如果只有b有坐标信息，转换为可比较的格式
-        return a.y - b.coordinates.viewportCoordinates.y
-      }
+      // 如果某个标注没有coordinates，尝试使用旧的坐标字段
+      const aY = a.coordinates?.viewportCoordinates.y ?? a.y ?? 0
+      const bY = b.coordinates?.viewportCoordinates.y ?? b.y ?? 0
       
       // 都没有详细坐标信息时，使用基础Y坐标（视口坐标系）
-      return a.y - b.y
+      return aY - bY
     })
   }, [])
 
@@ -249,6 +288,121 @@ export default function PdfAnoPage() {
       }, 1000)
     }
   }, [])
+
+  // 坐标转换工具函数
+  // 从canvas点击事件创建完整的coordinates对象
+  const createCoordinatesFromClick = useCallback(async (
+    event: React.MouseEvent<HTMLCanvasElement>, 
+    pageIndex: number,
+    width: number = 200,
+    height: number = 100
+  ) => {
+    if (!pdfDoc) return null
+
+    const canvas = event.currentTarget
+    const rect = canvas.getBoundingClientRect()
+
+    // 计算canvas坐标
+    const canvasX = (event.clientX - rect.left) * (canvas.width / rect.width)
+    const canvasY = (event.clientY - rect.top) * (canvas.height / rect.height)
+
+    try {
+      const page = await pdfDoc.getPage(pageIndex + 1)
+      const viewport = page.getViewport({ scale: 1 }) // 使用scale=1获取原始坐标
+      const currentViewport = page.getViewport({ scale }) // 当前缩放级别的视口
+
+      // 转换到原始坐标系统
+      const normalizedX = (canvasX / currentViewport.width) * viewport.width
+      const normalizedY = (canvasY / currentViewport.height) * viewport.height
+
+      // 视口坐标 (左上角为原点)
+      const viewportX = normalizedX
+      const viewportY = normalizedY
+
+      // PDF坐标 (左下角为原点)
+      const pdfX = normalizedX
+      const pdfY = viewport.height - normalizedY
+
+      return {
+        pdfCoordinates: {
+          x: pdfX,
+          y: pdfY,
+          width: width,
+          height: height,
+        },
+        viewportCoordinates: {
+          x: viewportX,
+          y: viewportY,
+          width: width,
+          height: height,
+        },
+        pageSize: {
+          width: viewport.width,
+          height: viewport.height,
+        },
+      }
+    } catch (err) {
+      console.error("Error creating coordinates from click:", err)
+      return null
+    }
+  }, [pdfDoc, scale])
+
+  // 统一的显示坐标计算函数
+  const calculateDisplayPosition = useCallback((coordinates: Annotation['coordinates'], canvas: HTMLCanvasElement) => {
+    const currentViewport = { width: canvas.width, height: canvas.height }
+    const scaleRatio = scale / 1 // 从scale=1转换到当前scale
+    
+    const highlightX = coordinates.viewportCoordinates.x * scaleRatio
+    const highlightY = coordinates.viewportCoordinates.y * scaleRatio
+    const highlightWidth = coordinates.viewportCoordinates.width * scaleRatio
+    const highlightHeight = coordinates.viewportCoordinates.height * scaleRatio * 1.2
+
+    return {
+      left: `${(highlightX / currentViewport.width) * 100}%`,
+      top: `${(highlightY / currentViewport.height) * 100}%`,
+      width: `${(highlightWidth / currentViewport.width) * 100}%`,
+      height: `${(highlightHeight / currentViewport.height) * 100}%`,
+    }
+  }, [scale])
+
+  // 从旧格式标注创建coordinates（用于向后兼容）
+  const createCoordinatesFromLegacy = useCallback(async (
+    annotation: { x: number, y: number, width: number, height: number, pageIndex: number }
+  ) => {
+    if (!pdfDoc) return null
+
+    try {
+      const page = await pdfDoc.getPage(annotation.pageIndex + 1)
+      const viewport = page.getViewport({ scale: 1 })
+
+      // 假设旧的坐标是基于当前缩放级别的canvas坐标
+      // 转换回原始坐标系统
+      const normalizedX = annotation.x
+      const normalizedY = annotation.y
+
+      return {
+        pdfCoordinates: {
+          x: normalizedX,
+          y: viewport.height - normalizedY,
+          width: annotation.width,
+          height: annotation.height,
+        },
+        viewportCoordinates: {
+          x: normalizedX,
+          y: normalizedY,
+          width: annotation.width,
+          height: annotation.height,
+        },
+        pageSize: {
+          width: viewport.width,
+          height: viewport.height,
+        },
+      }
+    } catch (err) {
+      console.error("Error creating coordinates from legacy:", err)
+      return null
+    }
+  }, [pdfDoc])
 
   // 渲染PDF页面
   const renderPage = useCallback(
@@ -745,97 +899,6 @@ export default function PdfAnoPage() {
     [searchResults],
   )
 
-  // 添加注释
-  const addAnnotation = useCallback(
-    (pageIndex: number, x: number, y: number) => {
-      if (!newAnnotationContent.trim()) return
-
-      const newAnnotation: Annotation = {
-        id: Date.now().toString(),
-        pageIndex,
-        x,
-        y,
-        width: 200,
-        height: 100,
-        content: newAnnotationContent,
-        type: "note",
-      }
-
-      setAnnotations((prev) => [...prev, newAnnotation])
-      setNewAnnotationContent("")
-      setIsAddingAnnotation(false)
-    },
-    [newAnnotationContent],
-  )
-
-  // 处理画布点击事件
-  const handleCanvasClick = useCallback(
-    (event: React.MouseEvent<HTMLCanvasElement>, pageIndex: number) => {
-      if (!isAddingAnnotation) return
-
-      const canvas = event.currentTarget
-      const rect = canvas.getBoundingClientRect()
-      const x = (event.clientX - rect.left) * (canvas.width / rect.width)
-      const y = (event.clientY - rect.top) * (canvas.height / rect.height)
-
-      addAnnotation(pageIndex, x, y)
-    },
-    [isAddingAnnotation, addAnnotation],
-  )
-
-  // 处理鼠标移动事件 - 修正坐标计算逻辑
-  const handleMouseMoveCanvas = useCallback(
-    async (event: React.MouseEvent<HTMLCanvasElement>, pageIndex: number) => {
-      if (!pdfDoc) return
-
-      const canvas = event.currentTarget
-      const rect = canvas.getBoundingClientRect()
-
-      // 计算鼠标在canvas中的相对位置
-      const canvasX = event.clientX - rect.left
-      const canvasY = event.clientY - rect.top
-
-      // 转换为canvas坐标
-      const scaleX = canvas.width / rect.width
-      const scaleY = canvas.height / rect.height
-      const actualX = canvasX * scaleX
-      const actualY = canvasY * scaleY
-
-      try {
-        const page = await pdfDoc.getPage(pageIndex + 1)
-        const viewport = page.getViewport({ scale: 1 }) // 使用scale=1获取原始坐标
-        const currentViewport = page.getViewport({ scale }) // 当前缩放级别的视口
-
-        // 计算在原始坐标系统中的位置
-        const normalizedX = (actualX / currentViewport.width) * viewport.width
-        const normalizedY = (actualY / currentViewport.height) * viewport.height
-
-        // 视口坐标 (左上角为原点)
-        const viewportX = normalizedX
-        const viewportY = normalizedY
-
-        // PDF坐标 (左下角为原点)
-        const pdfX = normalizedX
-        const pdfY = viewport.height - normalizedY
-
-        setMouseCoordinates({
-          pageIndex: pageIndex + 1,
-          pdfCoords: { x: pdfX, y: pdfY },
-          viewportCoords: { x: viewportX, y: viewportY },
-          pageSize: { width: viewport.width, height: viewport.height },
-        })
-      } catch (err) {
-        console.error("Error calculating mouse coordinates:", err)
-      }
-    },
-    [pdfDoc, scale],
-  )
-
-  // 处理鼠标离开事件
-  const handleMouseLeave = useCallback(() => {
-    setMouseCoordinates(null)
-  }, [])
-
   // 提取PDF全文内容
   const extractPDFText = useCallback(async () => {
     if (!pdfDoc) return ""
@@ -1170,6 +1233,15 @@ ${pdfText}`
           })
 
           // 使用与搜索结果相同的坐标计算方法
+          const mergedContent = mergeAnnotationContent({
+            selectedText: annotation.selected,
+            title: annotation.title,
+            description: annotation.description,
+            suggestion: annotation.suggestion,
+            annotationType: annotation.type,
+            severity: annotation.severity,
+          })
+
           locatedAnnotations.push({
             id: annotation.id,
             pageIndex: location.pageIndex,
@@ -1179,13 +1251,19 @@ ${pdfText}`
             height: location.height,
             content: annotation.title,
             type: "highlight",
+            author: addDefaultAuthorInfo("AI助手"),
+            timestamp: getCurrentTimestamp(),
+            isExpanded: false,
             aiAnnotation: {
               selectedText: annotation.selected,
-              title: annotation.title,
-              description: annotation.description,
-              suggestion: annotation.suggestion,
-              annotationType: annotation.type,
-              severity: annotation.severity,
+              mergedContent: mergedContent,
+              originalData: {
+                title: annotation.title,
+                description: annotation.description,
+                suggestion: annotation.suggestion,
+                annotationType: annotation.type,
+                severity: annotation.severity,
+              }
             },
             // 添加坐标信息，与搜索结果保持一致
             coordinates: {
@@ -1226,6 +1304,24 @@ ${pdfText}`
               : `全页面搜索未找到`
           })
           
+          // 创建fallback坐标信息
+          const fallbackCoordinates = await createCoordinatesFromLegacy({
+            x: fallbackX,
+            y: fallbackY,
+            width: 100,
+            height: 20,
+            pageIndex: pageIndex
+          })
+          
+          const mergedContentFallback = mergeAnnotationContent({
+            selectedText: annotation.selected,
+            title: annotation.title,
+            description: annotation.description,
+            suggestion: annotation.suggestion,
+            annotationType: annotation.type,
+            severity: annotation.severity,
+          })
+
           locatedAnnotations.push({
             id: annotation.id,
             pageIndex: pageIndex,
@@ -1235,14 +1331,25 @@ ${pdfText}`
             height: 20,
             content: annotation.title,
             type: "highlight",
+            author: addDefaultAuthorInfo("AI助手"),
+            timestamp: getCurrentTimestamp(),
+            isExpanded: false,
             aiAnnotation: {
               selectedText: annotation.selected,
-              title: annotation.title,
-              description: annotation.description,
-              suggestion: annotation.suggestion,
-              annotationType: annotation.type,
-              severity: annotation.severity,
+              mergedContent: mergedContentFallback,
+              originalData: {
+                title: annotation.title,
+                description: annotation.description,
+                suggestion: annotation.suggestion,
+                annotationType: annotation.type,
+                severity: annotation.severity,
+              }
             },
+            coordinates: fallbackCoordinates || {
+              pdfCoordinates: { x: fallbackX, y: fallbackY, width: 100, height: 20 },
+              viewportCoordinates: { x: fallbackX, y: fallbackY, width: 100, height: 20 },
+              pageSize: { width: 612, height: 792 }
+            }
           })
         }
       }
@@ -1321,6 +1428,36 @@ ${pdfText}`
     setIsResizing(false)
   }, [])
 
+  // 添加窗口大小变化的监听，确保面板尺寸合理
+  useEffect(() => {
+    const handleResize = () => {
+      const containerWidth = window.innerWidth;
+      const maxAllowedWidth = Math.min(600, containerWidth * 0.5);
+      
+      // 在小屏幕上自动调整面板宽度
+      if (containerWidth < 768) {
+        const newWidth = Math.min(maxAllowedWidth, containerWidth * 0.8);
+        setPanelWidth(newWidth);
+      } 
+      // 在初始化或窗口大小变化时，总是应用最大宽度限制
+      else if (panelWidth < maxAllowedWidth) {
+        setPanelWidth(maxAllowedWidth);
+      }
+      // 确保面板不会占据太多空间
+      else if (panelWidth > containerWidth * 0.5) {
+        setPanelWidth(maxAllowedWidth);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    // 初始化时也调用一次，确保应用最大宽度
+    handleResize();
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [panelWidth]);
+
   // 添加全局鼠标事件监听
   useEffect(() => {
     if (isResizing) {
@@ -1369,6 +1506,73 @@ ${pdfText}`
       })
       renderTasks.current.clear()
     }
+  }, [])
+
+  // 添加组件挂载时的初始化效果
+  useEffect(() => {
+    // 确保在组件挂载时立即设置为最大宽度
+    const containerWidth = window.innerWidth;
+    const maxAllowedWidth = Math.min(600, containerWidth * 0.5);
+    setPanelWidth(maxAllowedWidth);
+  }, []);
+
+  // 添加编辑批注内容的函数
+  const handleEditAnnotation = useCallback((annotation: Annotation, newContent: string) => {
+    setAnnotations(prev => prev.map(a => 
+      a.id === annotation.id 
+        ? {
+            ...a, 
+            isEditing: false,
+            content: newContent,
+            aiAnnotation: a.aiAnnotation 
+              ? { ...a.aiAnnotation, mergedContent: newContent }
+              : undefined
+          }
+        : a
+    ))
+  }, [])
+
+  // 添加编辑回复内容的函数
+  const handleEditReply = useCallback((annotationId: string, replyId: string, newContent: string) => {
+    setAnnotations(prev => prev.map(a => 
+      a.id === annotationId
+        ? {
+            ...a,
+            replies: a.replies?.map(r => 
+              r.id === replyId
+                ? { ...r, isEditing: false, content: newContent }
+                : r
+            )
+          }
+        : a
+    ))
+  }, [])
+
+  // 切换批注编辑状态
+  const toggleAnnotationEditMode = useCallback((annotation: Annotation) => {
+    setEditingContent(annotation.aiAnnotation?.mergedContent || annotation.content)
+    setAnnotations(prev => prev.map(a => 
+      a.id === annotation.id
+        ? { ...a, isEditing: !a.isEditing }
+        : { ...a, isEditing: false } // 关闭其他批注的编辑模式
+    ))
+  }, [])
+
+  // 切换回复编辑状态
+  const toggleReplyEditMode = useCallback((annotationId: string, reply: AnnotationReply) => {
+    setEditingContent(reply.content)
+    setAnnotations(prev => prev.map(a => 
+      a.id === annotationId
+        ? {
+            ...a,
+            replies: a.replies?.map(r => 
+              r.id === reply.id
+                ? { ...r, isEditing: !r.isEditing }
+                : { ...r, isEditing: false } // 关闭其他回复的编辑模式
+            )
+          }
+        : a
+    ))
   }, [])
 
   if (loading) {
@@ -1486,10 +1690,7 @@ ${pdfText}`
                         pageRefs.current.set(pageNumber, canvas)
                       }
                     }}
-                    onClick={(e) => handleCanvasClick(e, index)}
-                    onMouseMove={(e) => handleMouseMoveCanvas(e, index)}
-                    onMouseLeave={handleMouseLeave}
-                    className={`w-full ${isAddingAnnotation ? "cursor-crosshair" : "cursor-default"}`}
+                    className="w-full cursor-default"
                     style={{ display: "block" }}
                   />
 
@@ -1530,11 +1731,33 @@ ${pdfText}`
                               // 自动滚动到对应的批注项
                               scrollToAnnotationItem(annotation.id)
                             }}
-                            title={annotation.aiAnnotation?.title || annotation.content}
+                            title={annotation.aiAnnotation?.originalData.title || annotation.content}
                           />
                         )
                       } else {
                         // 回退到原有的计算方法（用于手动添加的注释）
+                        // 但如果有coordinates，优先使用统一计算方法
+                        const canvas = pageRefs.current.get(pageNumber)
+                        if (!canvas) return null
+
+                        let style
+                        if (annotation.coordinates) {
+                          // 使用统一的坐标计算
+                          style = calculateDisplayPosition(annotation.coordinates, canvas)
+                        } else {
+                          // 使用旧方法作为最后的fallback
+                          const x = annotation.x ?? 0
+                          const y = annotation.y ?? 0
+                          const width = annotation.width ?? 100
+                          const height = annotation.height ?? 20
+                          style = {
+                            left: `${(x / (canvas.width || 1)) * 100}%`,
+                            top: `${(y / (canvas.height || 1)) * 100}%`,
+                            width: `${(width / (canvas.width || 1)) * 100}%`,
+                            height: `${(height / (canvas.height || 1)) * 100}%`,
+                          }
+                        }
+
                         return (
                           <div
                             key={annotation.id}
@@ -1543,19 +1766,14 @@ ${pdfText}`
                                 ? "bg-yellow-200 bg-opacity-30 border-red-400 hover:bg-yellow-300 hover:bg-opacity-40"
                                 : "bg-blue-200 bg-opacity-30 border-red-400 hover:bg-blue-300 hover:bg-opacity-40"
                             } ${selectedAnnotation?.id === annotation.id ? "ring-2 ring-blue-500" : ""}`}
-                            style={{
-                              left: `${(annotation.x / (pageRefs.current.get(pageNumber)?.width || 1)) * 100}%`,
-                              top: `${(annotation.y / (pageRefs.current.get(pageNumber)?.height || 1)) * 100}%`,
-                              width: `${(annotation.width / (pageRefs.current.get(pageNumber)?.width || 1)) * 100}%`,
-                              height: `${(annotation.height / (pageRefs.current.get(pageNumber)?.height || 1)) * 100}%`,
-                            }}
+                            style={style}
                             onClick={(e) => {
                               e.stopPropagation()
                               setSelectedAnnotation(annotation)
                               // 自动滚动到对应的批注项
                               scrollToAnnotationItem(annotation.id)
                             }}
-                            title={annotation.aiAnnotation?.title || annotation.content}
+                            title={annotation.aiAnnotation?.originalData.title || annotation.content}
                           />
                         )
                       }
@@ -1912,223 +2130,240 @@ ${pdfText}`
                 )}
               </CardHeader>
               <CardContent className="p-1 flex-1 flex flex-col space-y-2">
-                <div className="space-y-2 flex-shrink-0">
-                  <Button
-                    onClick={() => setIsAddingAnnotation(!isAddingAnnotation)}
-                    variant={isAddingAnnotation ? "default" : "outline"}
-                    className="w-full"
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    {isAddingAnnotation ? "Cancel Adding" : "Add Manual Annotation"}
-                  </Button>
-
-                  {isAddingAnnotation && (
-                    <div className="space-y-2">
-                      <Textarea
-                        placeholder="Enter annotation content..."
-                        value={newAnnotationContent}
-                        onChange={(e) => setNewAnnotationContent(e.target.value)}
-                        rows={3}
-                      />
-                      <div className="text-sm text-gray-600">Click on the PDF to place the annotation</div>
-                    </div>
-                  )}
-                </div>
-
-                <div ref={annotationPanelRef} className="space-y-3 flex-1 overflow-y-auto max-h-[calc(100vh-250px)]">
+                <div ref={annotationPanelRef} className="space-y-1 flex-1 overflow-y-auto max-h-[calc(100vh-250px)]">
                   {sortAnnotations(annotations).map((annotation) => (
-                    <div
+                    <AnnotationBubble
                       key={annotation.id}
-                      ref={(el) => {
-                        if (el) {
-                          annotationItemRefs.current.set(annotation.id, el)
-                        } else {
-                          annotationItemRefs.current.delete(annotation.id)
+                      className={selectedAnnotation?.id === annotation.id ? "bg-blue-50 border-blue-300" : ""}
+                      onClick={(e) => {
+                        // 如果点击的是回复区域，不处理折叠/展开
+                        if ((e.target as HTMLElement).closest('.annotation-replies-area')) {
+                          return;
                         }
-                      }}
-                      className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                        selectedAnnotation?.id === annotation.id
-                          ? "bg-blue-50 border-blue-300"
-                          : "hover:bg-gray-50 border-gray-200"
-                      }`}
-                      onClick={() => {
+                        
+                        // 修改展开/折叠逻辑，确保不影响布局
+                        setAnnotations((prev) =>
+                          prev.map((a) =>
+                            a.id === annotation.id
+                              ? { ...a, isExpanded: !a.isExpanded }
+                              : a
+                          )
+                        )
+                        // 设置选中的批注
                         setSelectedAnnotation(annotation)
-                        // 当在批注面板中点击批注项时，也滚动到对应的PDF位置
+                        // 滚动到PDF中对应的位置
                         const pageElement = document.getElementById(`page-${annotation.pageIndex + 1}`)
                         if (pageElement) {
                           pageElement.scrollIntoView({ behavior: "smooth", block: "center" })
                         }
                       }}
                     >
-                      {/* 基本信息 */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-xs">
-                            Page {annotation.pageIndex + 1}
-                          </Badge>
-                          {annotation.aiAnnotation && (
-                            <>
-                              <Badge
-                                variant="outline"
-                                className={`text-xs ${
-                                  annotation.aiAnnotation.severity === "high"
-                                    ? "bg-red-50 text-red-700"
-                                    : annotation.aiAnnotation.severity === "medium"
-                                      ? "bg-yellow-50 text-yellow-700"
-                                      : "bg-green-50 text-green-700"
-                                }`}
-                              >
-                                {annotation.aiAnnotation.severity}
-                              </Badge>
-                              <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700">
-                                {annotation.aiAnnotation.annotationType}
-                              </Badge>
-                            </>
-                          )}
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setAnnotations((prev) => prev.filter((a) => a.id !== annotation.id))
+                      <div className="flex w-full gap-2">
+                        <div 
+                          ref={(el) => {
+                            if (el) {
+                              annotationItemRefs.current.set(annotation.id, el)
+                            } else {
+                              annotationItemRefs.current.delete(annotation.id)
+                            }
                           }}
-                          className="text-red-500 hover:text-red-700 h-6 w-6 p-0"
+                          className="flex-shrink-0" // 添加这个类防止图标被挤压
                         >
-                          ×
-                        </Button>
-                      </div>
-
-                      {annotation.aiAnnotation ? (
-                        /* AI批注详细信息 */
-                        <div className="space-y-3">
-                          {/* 选中文字 */}
-                          {annotation.aiAnnotation.selectedText &&
-                            annotation.aiAnnotation.selectedText !== "无特定位置" && (
-                              <div>
-                                <div className="text-xs font-medium text-gray-600 mb-1">选中文字:</div>
-                                <div className="text-sm bg-yellow-50 p-2 rounded border-l-2 border-yellow-400">
-                                  "{annotation.aiAnnotation.selectedText}"
+                          <AnnotationIcon 
+                            role={annotation.author.role} 
+                            type={annotation.type}
+                          />
+                        </div>
+                        <AnnotationContent className="w-full"> {/* 添加宽度控制 */}
+                          <AnnotationHeader>
+                            <AnnotationAuthorName role={annotation.author.role} />
+                            <span className="text-gray-400">•</span>
+                            <span>{formatTimestamp(annotation.timestamp)}</span>
+                            <span className="text-gray-400">•</span>
+                            <span>第{annotation.pageIndex + 1}页</span>
+                            <div className="ml-auto">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setAnnotations((prev) => prev.filter((a) => a.id !== annotation.id))
+                                }}
+                                className="text-red-500 hover:text-red-700 h-5 w-5 p-0"
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          </AnnotationHeader>
+                          {annotation.aiAnnotation ? (
+                            <>
+                              {annotation.aiAnnotation.selectedText && (
+                                <QuotedText text={annotation.aiAnnotation.selectedText} />
+                              )}
+                              {annotation.isEditing ? (
+                                <div className="mt-2">
+                                  <Textarea
+                                    value={editingContent}
+                                    onChange={(e) => setEditingContent(e.target.value)}
+                                    className="w-full min-h-[100px] text-sm"
+                                  />
+                                  <div className="flex justify-end gap-2 mt-2">
+                                    <Button 
+                                      size="sm" 
+                                      variant="outline" 
+                                      onClick={() => toggleAnnotationEditMode(annotation)}
+                                    >
+                                      取消
+                                    </Button>
+                                    <Button 
+                                      size="sm" 
+                                      onClick={() => handleEditAnnotation(annotation, editingContent)}
+                                    >
+                                      保存
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <AnnotationBody 
+                                  isExpanded={annotation.isExpanded || false}
+                                  maxLines={3}
+                                  onClick={() => toggleAnnotationEditMode(annotation)}
+                                  className="cursor-pointer hover:bg-gray-50"
+                                >
+                                  {annotation.aiAnnotation.mergedContent}
+                                </AnnotationBody>
+                              )}
+                            </>
+                          ) : (
+                            annotation.isEditing ? (
+                              <div className="mt-2">
+                                <Textarea
+                                  value={editingContent}
+                                  onChange={(e) => setEditingContent(e.target.value)}
+                                  className="w-full min-h-[100px] text-sm"
+                                />
+                                <div className="flex justify-end gap-2 mt-2">
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline" 
+                                    onClick={() => toggleAnnotationEditMode(annotation)}
+                                  >
+                                    取消
+                                  </Button>
+                                  <Button 
+                                    size="sm" 
+                                    onClick={() => handleEditAnnotation(annotation, editingContent)}
+                                  >
+                                    保存
+                                  </Button>
                                 </div>
                               </div>
-                            )}
-
-                          {/* 标题 */}
-                          <div>
-                            <div className="text-xs font-medium text-gray-600 mb-1">批注标题:</div>
-                            <div className="text-sm font-medium text-gray-800">{annotation.aiAnnotation.title}</div>
-                          </div>
-
-                          {/* 存在问题 - 可编辑 */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <div className="text-xs font-medium text-gray-600">存在问题:</div>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  if (editingAnnotation === annotation.id) {
-                                    // 保存编辑
-                                    setAnnotations((prev) =>
-                                      prev.map((a) =>
-                                        a.id === annotation.id
-                                          ? {
-                                              ...a,
-                                              aiAnnotation: {
-                                                ...a.aiAnnotation!,
-                                                description: editingDescription,
-                                              },
-                                            }
-                                          : a,
-                                      ),
-                                    )
-                                    setEditingAnnotation(null)
-                                  } else {
-                                    // 开始编辑
-                                    setEditingAnnotation(annotation.id)
-                                    setEditingDescription(annotation.aiAnnotation?.description || "")
-                                  }
-                                }}
-                                className="h-6 text-xs"
-                              >
-                                {editingAnnotation === annotation.id ? "保存" : "编辑"}
-                              </Button>
-                            </div>
-                            {editingAnnotation === annotation.id ? (
-                              <Textarea
-                                value={editingDescription}
-                                onChange={(e) => setEditingDescription(e.target.value)}
-                                className="text-sm"
-                                rows={3}
-                                onClick={(e) => e.stopPropagation()}
-                              />
                             ) : (
-                              <div className="text-sm text-gray-700 bg-red-50 p-2 rounded border-l-2 border-red-400">
-                                {annotation.aiAnnotation.description}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* 修改建议 - 可编辑 */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <div className="text-xs font-medium text-gray-600">修改建议:</div>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  if (editingAnnotation === `${annotation.id}-suggestion`) {
-                                    // 保存编辑
-                                    setAnnotations((prev) =>
-                                      prev.map((a) =>
-                                        a.id === annotation.id
-                                          ? {
-                                              ...a,
-                                              aiAnnotation: {
-                                                ...a.aiAnnotation!,
-                                                suggestion: editingSuggestion,
-                                              },
-                                            }
-                                          : a,
-                                      ),
-                                    )
-                                    setEditingAnnotation(null)
-                                  } else {
-                                    // 开始编辑
-                                    setEditingAnnotation(`${annotation.id}-suggestion`)
-                                    setEditingSuggestion(annotation.aiAnnotation?.suggestion || "")
-                                  }
-                                }}
-                                className="h-6 text-xs"
+                              <AnnotationBody 
+                                isExpanded={annotation.isExpanded || false}
+                                maxLines={3}
+                                onClick={() => toggleAnnotationEditMode(annotation)}
+                                className="cursor-pointer hover:bg-gray-50"
                               >
-                                {editingAnnotation === `${annotation.id}-suggestion` ? "保存" : "编辑"}
-                              </Button>
+                                {annotation.content}
+                              </AnnotationBody>
+                            )
+                          )}
+                        </AnnotationContent>
+                      </div>
+                      
+                      {annotation.isExpanded && (
+                        <div className="pl-8 pb-2 w-full mt-2 annotation-replies-area">
+                          {/* 回复列表 */}
+                          {annotation.replies && annotation.replies.length > 0 && (
+                            <div className="space-y-2 mb-2">
+                              {annotation.replies.map(reply => (
+                                <div key={reply.id} className="flex items-start gap-2">
+                                  <span className="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-xs flex-shrink-0">{reply.author.avatar || "💬"}</span>
+                                  <div className="flex-1 min-w-0 overflow-hidden">
+                                    <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+                                      <span>{reply.author.name}</span>
+                                      <span className="text-gray-400">•</span>
+                                      <span>{formatTimestamp(reply.timestamp)}</span>
+                                    </div>
+                                    {reply.isEditing ? (
+                                      <div className="mt-1">
+                                        <Textarea
+                                          value={editingContent}
+                                          onChange={(e) => setEditingContent(e.target.value)}
+                                          className="w-full min-h-[60px] text-sm"
+                                        />
+                                        <div className="flex justify-end gap-2 mt-1">
+                                          <Button 
+                                            size="sm" 
+                                            variant="outline" 
+                                            onClick={() => toggleReplyEditMode(annotation.id, reply)}
+                                            className="h-7 text-xs"
+                                          >
+                                            取消
+                                          </Button>
+                                          <Button 
+                                            size="sm"
+                                            className="h-7 text-xs"
+                                            onClick={() => handleEditReply(annotation.id, reply.id, editingContent)}
+                                          >
+                                            保存
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div 
+                                        className="text-sm text-gray-700 whitespace-pre-line break-words cursor-pointer hover:bg-gray-50 p-1 rounded"
+                                        onClick={() => toggleReplyEditMode(annotation.id, reply)}
+                                      >
+                                        {reply.content}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                            {editingAnnotation === `${annotation.id}-suggestion` ? (
-                              <Textarea
-                                value={editingSuggestion}
-                                onChange={(e) => setEditingSuggestion(e.target.value)}
-                                className="text-sm"
-                                rows={3}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            ) : (
-                              <div className="text-sm text-gray-700 bg-green-50 p-2 rounded border-l-2 border-green-400">
-                                {annotation.aiAnnotation.suggestion}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        /* 手动批注 */
-                        <div>
-                          <div className="text-xs font-medium text-gray-600 mb-1">手动批注:</div>
-                          <div className="text-sm text-gray-700">{annotation.content}</div>
+                          )}
+                          {/* 添加回复输入框 */}
+                          <form onSubmit={e => {
+                            e.preventDefault();
+                            const form = e.target as HTMLFormElement;
+                            const input = form.reply as HTMLInputElement;
+                            const value = input.value.trim();
+                            if (!value) return;
+                            setAnnotations(prev => prev.map(a =>
+                              a.id === annotation.id
+                                ? {
+                                    ...a,
+                                    replies: [
+                                      ...(a.replies || []),
+                                      {
+                                        id: Date.now().toString(),
+                                        author: addDefaultAuthorInfo("手动批注者"),
+                                        content: value,
+                                        timestamp: getCurrentTimestamp(),
+                                      }
+                                    ]
+                                  }
+                                : a
+                            ));
+                            input.value = "";
+                          }} className="flex gap-2 items-center mt-2">
+                            <input
+                              name="reply"
+                              type="text"
+                              placeholder="添加回复"
+                              className="flex-1 border rounded px-2 py-1 text-sm focus:outline-none focus:ring"
+                              autoComplete="off"
+                            />
+                            <button 
+                              type="submit" 
+                              className="text-blue-600 text-xs font-medium px-2 py-1 rounded hover:bg-blue-50 flex-shrink-0"
+                            >回复</button>
+                          </form>
                         </div>
                       )}
-                    </div>
+                    </AnnotationBubble>
                   ))}
 
                   {annotations.length === 0 && (
