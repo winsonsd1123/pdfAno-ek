@@ -16,4 +16,4 @@ export interface UploadResponse {
 export interface DeleteResponse {
   success: boolean
   error?: string
-} 
+}

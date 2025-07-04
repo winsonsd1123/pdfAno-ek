@@ -59,4 +59,4 @@ export async function POST(request: NextRequest): Promise<NextResponse<UploadRes
       error: 'Upload failed: ' + (error instanceof Error ? error.message : 'Unknown error')
     }, { status: 500 })
   }
-} 
+}

@@ -27,4 +27,4 @@ export async function DELETE(request: NextRequest): Promise<NextResponse<DeleteR
       error: 'Delete failed: ' + (error instanceof Error ? error.message : 'Unknown error')
     }, { status: 500 })
   }
-} 
+}

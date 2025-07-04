@@ -118,4 +118,4 @@ export class DocumentStorage {
   static getSessionCount(): number {
     return this.getSessionDocuments().length
   }
-} 
+}
