@@ -21,87 +21,25 @@ import { AnnotationBubble, AnnotationContent, AnnotationHeader, AnnotationBody }
 import { AnnotationIcon, AnnotationAuthorName } from "@/components/ui/annotation-icon"
 import { QuotedText } from "@/components/ui/quoted-text"
 
-// PDF.js types
-interface PDFDocumentProxy {
-  numPages: number
-  getPage: (pageNumber: number) => Promise<PDFPageProxy>
-  getDestinations: () => Promise<any>
-  cleanup: () => void
-}
+// 导入PDF工具模块
+import { loadPDFDocument } from "@/lib/pdf-loader"
+import { createPDFRenderer, ScaleController } from "@/lib/pdf-renderer"
+import { createTextExtractor } from "@/lib/pdf-text-extractor"
+import { 
+  createCoordinatesFromClick as createCoordinatesFromClickUtil,
+  createCoordinatesFromLegacy as createCoordinatesFromLegacyUtil,
+  calculateDisplayPosition as calculateDisplayPositionUtil 
+} from "@/lib/pdf-coordinate-utils"
+// 导入AI批注服务模块
+import { createAIAnnotationService, type AIAnnotationService } from "@/lib/ai-annotation-service"
+// 简化版PDF类型定义（避免重复导入）
+type PDFDocumentProxy = any
+type PDFPageProxy = any  
+type PDFPageViewport = any
+type PDFRenderTask = any
+type SearchResult = any
 
-interface PDFPageProxy {
-  getViewport: (options: { scale: number; rotation?: number }) => PDFPageViewport
-  render: (renderContext: any) => PDFRenderTask
-  getTextContent: () => Promise<TextContent>
-  getAnnotations: () => Promise<any[]>
-  cleanup: () => void
-}
-
-interface PDFPageViewport {
-  width: number
-  height: number
-  transform: number[]
-  clone: (options?: { scale?: number; rotation?: number }) => PDFPageViewport
-}
-
-interface PDFRenderTask {
-  promise: Promise<void>
-  cancel: () => void
-}
-
-interface TextContent {
-  items: TextItem[]
-}
-
-interface TextItem {
-  str: string
-  dir: string
-  width: number
-  height: number
-  transform: number[]
-  fontName: string
-}
-
-interface SearchResult {
-  pageIndex: number
-  textIndex: number
-  paragraphIndex: number
-  text: string
-  x: number
-  y: number
-  width: number
-  height: number
-  context: string
-  // 添加详细的坐标信息
-  coordinates: {
-    // PDF原始坐标系统
-    pdfCoordinates: {
-      x: number
-      y: number
-      width: number
-      height: number
-    }
-    // 视口坐标系统
-    viewportCoordinates: {
-      x: number
-      y: number
-      width: number
-      height: number
-    }
-    // 变换矩阵
-    transform: number[]
-    // 页面尺寸信息
-    pageSize: {
-      width: number
-      height: number
-    }
-    // 相对位置百分比
-    relativePosition: {
-      xPercent: number
-      yPercent: number
-    }
-  }
-}
+// 应用特定的接口定义（业务逻辑相关）
 
 interface AnnotationReply {
   id: string
@@ -233,10 +171,18 @@ export default function PdfAnoPage() {
 
   const containerRef = useRef<HTMLDivElement>(null)
   const pageRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
-  const observerRef = useRef<IntersectionObserver | null>(null)
-  const renderedPages = useRef<Set<number>>(new Set())
+  
+  // PDF渲染器相关的refs  
+  const pdfRenderer = useRef<ReturnType<typeof createPDFRenderer> | null>(null)
+  const textExtractor = useRef<ReturnType<typeof createTextExtractor> | null>(null)
+  
+  // AI批注服务ref
+  const aiAnnotationService = useRef<AIAnnotationService | null>(null)
+  
 
-  // Add render task tracking
+  
+  // 简化的向后兼容refs
+  const renderedPages = useRef<Set<number>>(new Set())
   const renderTasks = useRef<Map<number, PDFRenderTask>>(new Map())
 
   // 添加批注面板滚动容器的ref
@@ -289,8 +235,7 @@ export default function PdfAnoPage() {
     }
   }, [])
 
-  // 坐标转换工具函数
-  // 从canvas点击事件创建完整的coordinates对象
+  // 使用工具模块的坐标转换函数（保持相同的接口）
   const createCoordinatesFromClick = useCallback(async (
     event: React.MouseEvent<HTMLCanvasElement>, 
     pageIndex: number,
@@ -298,459 +243,95 @@ export default function PdfAnoPage() {
     height: number = 100
   ) => {
     if (!pdfDoc) return null
-
-    const canvas = event.currentTarget
-    const rect = canvas.getBoundingClientRect()
-
-    // 计算canvas坐标
-    const canvasX = (event.clientX - rect.left) * (canvas.width / rect.width)
-    const canvasY = (event.clientY - rect.top) * (canvas.height / rect.height)
-
-    try {
-      const page = await pdfDoc.getPage(pageIndex + 1)
-      const viewport = page.getViewport({ scale: 1 }) // 使用scale=1获取原始坐标
-      const currentViewport = page.getViewport({ scale }) // 当前缩放级别的视口
-
-      // 转换到原始坐标系统
-      const normalizedX = (canvasX / currentViewport.width) * viewport.width
-      const normalizedY = (canvasY / currentViewport.height) * viewport.height
-
-      // 视口坐标 (左上角为原点)
-      const viewportX = normalizedX
-      const viewportY = normalizedY
-
-      // PDF坐标 (左下角为原点)
-      const pdfX = normalizedX
-      const pdfY = viewport.height - normalizedY
-
-      return {
-        pdfCoordinates: {
-          x: pdfX,
-          y: pdfY,
-          width: width,
-          height: height,
-        },
-        viewportCoordinates: {
-          x: viewportX,
-          y: viewportY,
-          width: width,
-          height: height,
-        },
-        pageSize: {
-          width: viewport.width,
-          height: viewport.height,
-        },
-      }
-    } catch (err) {
-      console.error("Error creating coordinates from click:", err)
-      return null
-    }
+    return createCoordinatesFromClickUtil(event, pageIndex, pdfDoc, scale, width, height)
   }, [pdfDoc, scale])
 
-  // 统一的显示坐标计算函数
   const calculateDisplayPosition = useCallback((coordinates: Annotation['coordinates'], canvas: HTMLCanvasElement) => {
-    const currentViewport = { width: canvas.width, height: canvas.height }
-    const scaleRatio = scale / 1 // 从scale=1转换到当前scale
-    
-    const highlightX = coordinates.viewportCoordinates.x * scaleRatio
-    const highlightY = coordinates.viewportCoordinates.y * scaleRatio
-    const highlightWidth = coordinates.viewportCoordinates.width * scaleRatio
-    const highlightHeight = coordinates.viewportCoordinates.height * scaleRatio * 1.2
-
-    return {
-      left: `${(highlightX / currentViewport.width) * 100}%`,
-      top: `${(highlightY / currentViewport.height) * 100}%`,
-      width: `${(highlightWidth / currentViewport.width) * 100}%`,
-      height: `${(highlightHeight / currentViewport.height) * 100}%`,
-    }
+    return calculateDisplayPositionUtil(coordinates, canvas, scale)
   }, [scale])
 
-  // 从旧格式标注创建coordinates（用于向后兼容）
   const createCoordinatesFromLegacy = useCallback(async (
     annotation: { x: number, y: number, width: number, height: number, pageIndex: number }
   ) => {
     if (!pdfDoc) return null
-
-    try {
-      const page = await pdfDoc.getPage(annotation.pageIndex + 1)
-      const viewport = page.getViewport({ scale: 1 })
-
-      // 假设旧的坐标是基于当前缩放级别的canvas坐标
-      // 转换回原始坐标系统
-      const normalizedX = annotation.x
-      const normalizedY = annotation.y
-
-      return {
-        pdfCoordinates: {
-          x: normalizedX,
-          y: viewport.height - normalizedY,
-          width: annotation.width,
-          height: annotation.height,
-        },
-        viewportCoordinates: {
-          x: normalizedX,
-          y: normalizedY,
-          width: annotation.width,
-          height: annotation.height,
-        },
-        pageSize: {
-          width: viewport.width,
-          height: viewport.height,
-        },
-      }
-    } catch (err) {
-      console.error("Error creating coordinates from legacy:", err)
-      return null
-    }
+    return createCoordinatesFromLegacyUtil(annotation, pdfDoc)
   }, [pdfDoc])
 
-  // 渲染PDF页面
+  // 使用新渲染器的页面渲染（简化版）
   const renderPage = useCallback(
     async (pageNumber: number) => {
-      if (!pdfDoc || renderedPages.current.has(pageNumber)) return
-
-      // Cancel any existing render task for this page
-      const existingTask = renderTasks.current.get(pageNumber)
-      if (existingTask) {
-        existingTask.cancel()
-        renderTasks.current.delete(pageNumber)
+      if (pdfRenderer.current) {
+        await pdfRenderer.current.renderPage(pageNumber)
       }
-
-      try {
-        const page = await pdfDoc.getPage(pageNumber)
-        const viewport = page.getViewport({ scale })
-
-        const canvas = pageRefs.current.get(pageNumber)
-        if (!canvas) return
-
-        const context = canvas.getContext("2d")
-        if (!context) return
-
-        // Clear the canvas before rendering
-        context.clearRect(0, 0, canvas.width, canvas.height)
-
-        canvas.height = viewport.height
-        canvas.width = viewport.width
-
-        const renderContext = {
-          canvasContext: context,
-          viewport: viewport,
-        }
-
-        const renderTask = page.render(renderContext)
-        renderTasks.current.set(pageNumber, renderTask)
-
-        await renderTask.promise
-
-        // Mark as rendered and clean up
-        renderedPages.current.add(pageNumber)
-        renderTasks.current.delete(pageNumber)
-      } catch (err: any) {
-        // Handle cancellation gracefully
-        if (err.name === "RenderingCancelledException") {
-          console.log(`Rendering cancelled for page ${pageNumber}`)
-        } else {
-          console.error(`Error rendering page ${pageNumber}:`, err)
-        }
-        renderTasks.current.delete(pageNumber)
-      }
+      // 保持向后兼容的标记
+      renderedPages.current.add(pageNumber)
     },
-    [pdfDoc, scale],
+    [pdfRenderer],
   )
 
-  // 加载PDF.js
+  // 使用新的PDF加载器加载PDF.js和文档
   useEffect(() => {
-    const loadPdfJs = async () => {
+    const loadPdfDocument = async () => {
       try {
-        // Load PDF.js 5.3.31 ES module from CDN
-        const script = document.createElement("script")
-        script.type = "module"
-        script.innerHTML = `
-          import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/pdf.min.mjs';
-          
-          // Set worker with matching version
-          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/pdf.worker.min.mjs';
-          
-          // Make pdfjsLib available globally
-          window.pdfjsLib = pdfjsLib;
-          
-          // Dispatch a custom event to signal that PDF.js is loaded
-          window.dispatchEvent(new CustomEvent('pdfjsLoaded'));
-        `
+        setLoading(true)
+        setError(null)
         
-        // Listen for the custom event
-        const handlePdfjsLoaded = async () => {
-          try {
-            const pdfjsLib = (window as any).pdfjsLib
-
-            // Load PDF document
-            const loadingTask = pdfjsLib.getDocument({
-              url: PDF_URL,
-              cMapUrl: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.3.31/cmaps/",
-              cMapPacked: true,
-            })
-
-            const pdf = await loadingTask.promise
-            setPdfDoc(pdf)
-            setNumPages(pdf.numPages)
-            setLoading(false)
-          } catch (err) {
-            console.error("Error loading PDF document:", err)
-            setError("Failed to load PDF document")
-            setLoading(false)
-          }
+        // 使用新的PDF加载器
+        const pdf = await loadPDFDocument(PDF_URL)
+        setPdfDoc(pdf)
+        setNumPages(pdf.numPages)
+        
+        // 初始化PDF工具实例
+        pdfRenderer.current = createPDFRenderer(pdf, scale)
+        textExtractor.current = createTextExtractor(pdf)
+        
+        // 设置容器引用和懒加载
+        if (containerRef.current && pdfRenderer.current) {
+          pdfRenderer.current.setContainer(containerRef.current)
+          pdfRenderer.current.setupLazyLoading()
         }
-
-        // Add event listener
-        window.addEventListener('pdfjsLoaded', handlePdfjsLoaded, { once: true })
-
-        script.onerror = () => {
-          console.error("Error loading PDF.js library")
-          setError("Failed to load PDF.js library")
-          setLoading(false)
-        }
-
-        document.head.appendChild(script)
-
-        // Cleanup function
-        return () => {
-          window.removeEventListener('pdfjsLoaded', handlePdfjsLoaded)
-          if (document.head.contains(script)) {
-            document.head.removeChild(script)
-          }
-        }
-      } catch (err) {
-        console.error("Error setting up PDF.js:", err)
-        setError("Failed to initialize PDF viewer")
+        
+        setLoading(false)
+        console.log(`PDF加载成功：${pdf.numPages} 页，工具实例已初始化`)
+      } catch (err: any) {
+        console.error("PDF文档加载失败:", err)
+        setError(err.message || "PDF文档加载失败")
         setLoading(false)
       }
     }
 
-    loadPdfJs()
+    loadPdfDocument()
   }, [])
 
-  // 设置懒加载观察器
+  // 简化的懒加载设置（主要由PDF渲染器处理）
   useEffect(() => {
-    if (!pdfDoc) return
+    if (!pdfDoc || !pdfRenderer.current) return
 
-    // Disconnect existing observer
-    if (observerRef.current) {
-      observerRef.current.disconnect()
-    }
+    // 确保新渲染器的懒加载已设置
+    pdfRenderer.current.setupLazyLoading()
 
-    observerRef.current = new IntersectionObserver(
+    // 保留简化的后备观察器（兼容性）
+    const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             const pageNumber = Number.parseInt(entry.target.getAttribute("data-page") || "0")
-            if (pageNumber && !renderedPages.current.has(pageNumber)) {
-              // Add a small delay to prevent rapid successive calls
-              setTimeout(() => {
-                if (!renderedPages.current.has(pageNumber)) {
-                  renderPage(pageNumber)
-                }
-              }, 50)
-            }
+            if (pageNumber) renderPage(pageNumber)
           }
         })
       },
-      {
-        root: containerRef.current,
-        rootMargin: "100px",
-        threshold: 0.1,
-      },
+      { rootMargin: "100px", threshold: 0.1 }
     )
 
-    // Observe existing page elements
     const pageElements = document.querySelectorAll("[data-page]")
-    pageElements.forEach((element) => {
-      observerRef.current?.observe(element)
-    })
+    pageElements.forEach((element) => observer.observe(element))
 
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect()
-      }
-    }
+    return () => observer.disconnect()
   }, [pdfDoc, renderPage])
 
-  // 搜索文本 - 支持UI搜索和程序化查找
-  // 文本标准化函数 - 处理标点符号和空格问题
-  const normalizeText = useCallback((text: string): string => {
-    return text
-      // 统一中文标点符号
-      .replace(/[""]/g, '"')  // 统一双引号
-      .replace(/['']/g, "'")  // 统一单引号
-      .replace(/[，]/g, ',')  // 统一逗号
-      .replace(/[。]/g, '.')  // 统一句号
-      .replace(/[？]/g, '?')  // 统一问号
-      .replace(/[！]/g, '!')  // 统一感叹号
-      .replace(/[：]/g, ':')  // 统一冒号
-      .replace(/[；]/g, ';')  // 统一分号
-      .replace(/[（]/g, '(')  // 统一左括号
-      .replace(/[）]/g, ')')  // 统一右括号
-      .replace(/[【]/g, '[')  // 统一左方括号
-      .replace(/[】]/g, ']')  // 统一右方括号
-      // 统一空格和换行
-      .replace(/\s+/g, ' ')   // 多个空格合并为一个
-      .replace(/[\r\n]+/g, ' ') // 换行符转为空格
-      .trim()
-  }, [])
+  // 搜索文本 - 使用新的文本提取器模块
 
-  // 智能文本匹配函数
-  const smartTextMatch = useCallback((searchText: string, targetText: string): boolean => {
-    const normalizedSearch = normalizeText(searchText.toLowerCase())
-    const normalizedTarget = normalizeText(targetText.toLowerCase())
-    
-    // 1. 直接匹配
-    if (normalizedTarget.includes(normalizedSearch)) {
-      return true
-    }
-    
-    // 2. 移除所有标点符号和空格的匹配
-    const cleanSearch = normalizedSearch.replace(/[^\w\u4e00-\u9fff]/g, '')
-    const cleanTarget = normalizedTarget.replace(/[^\w\u4e00-\u9fff]/g, '')
-    
-    if (cleanTarget.includes(cleanSearch)) {
-      return true
-    }
-    
-    // 3. 更激进的文本清理：只保留中文字符和字母数字
-    const veryCleanSearch = normalizedSearch.replace(/[^\u4e00-\u9fff\w]/g, '')
-    const veryCleanTarget = normalizedTarget.replace(/[^\u4e00-\u9fff\w]/g, '')
-    
-    if (veryCleanTarget.includes(veryCleanSearch)) {
-      return true
-    }
-    
-    // 4. 分词匹配：将搜索文本分成关键词进行匹配
-    const searchWords = normalizedSearch.split(/\s+/).filter(word => word.length > 0)
-    const targetWords = normalizedTarget.split(/\s+/).filter(word => word.length > 0)
-    
-    if (searchWords.length > 1) {
-      // 检查所有关键词是否都能在目标文本中找到
-      const foundWords = searchWords.filter(searchWord => {
-        return targetWords.some(targetWord => 
-          targetWord.includes(searchWord) || 
-          targetWord.replace(/[^\w\u4e00-\u9fff]/g, '').includes(searchWord.replace(/[^\w\u4e00-\u9fff]/g, ''))
-        )
-      })
-      
-      // 如果找到了80%以上的关键词，认为匹配
-      if (foundWords.length >= Math.floor(searchWords.length * 0.8)) {
-        return true
-      }
-    }
-    
-    // 5. 序列匹配：检查搜索文本的字符序列是否在目标文本中按顺序出现
-    if (cleanSearch.length > 3) {
-      let searchIndex = 0
-      for (let i = 0; i < cleanTarget.length && searchIndex < cleanSearch.length; i++) {
-        if (cleanTarget[i] === cleanSearch[searchIndex]) {
-          searchIndex++
-        }
-      }
-      
-      // 如果找到了85%以上的字符按顺序出现，认为匹配
-      if (searchIndex >= Math.floor(cleanSearch.length * 0.85)) {
-        return true
-      }
-    }
-    
-         // 6. 数字和文本分别匹配（针对"1. 元素优选"这种情况）
-     const searchNumbers: string[] = normalizedSearch.match(/\d+/g) || []
-     const targetNumbers: string[] = normalizedTarget.match(/\d+/g) || []
-     const searchChinese = normalizedSearch.replace(/[^\u4e00-\u9fff]/g, '')
-     const targetChinese = normalizedTarget.replace(/[^\u4e00-\u9fff]/g, '')
-     
-     if (searchNumbers.length > 0 && searchChinese.length > 0) {
-       const numbersMatch = searchNumbers.some((num: string) => targetNumbers.includes(num))
-       const chineseMatch = targetChinese.includes(searchChinese) || 
-                           searchChinese.split('').every((char: string) => targetChinese.includes(char))
-       
-       if (numbersMatch && chineseMatch) {
-         return true
-       }
-     }
-    
-    return false
-  }, [normalizeText])
-
-  // 创建搜索结果的辅助函数
-  const createSearchResult = useCallback((
-    item: TextItem,
-    pageIndex: number,
-    textIndex: number,
-    paragraphIndex: number,
-    paragraph: TextItem[],
-    viewport: PDFPageViewport,
-    customText?: string
-  ): SearchResult => {
-              // 获取变换矩阵信息
-              const transform = item.transform
-
-              // PDF原始坐标系统 (左下角为原点)
-              const pdfX = transform[4]
-              const pdfY = transform[5] // 这是文字基线位置
-
-              // 修正Y坐标计算 - 考虑文字高度，让标注框覆盖整个文字
-              // transform[5]是基线位置，需要向上偏移文字高度来获得文字顶部
-              const textHeight = item.height
-              const pdfYTop = pdfY + textHeight // PDF坐标系中，向上偏移是加法
-
-              // 视口坐标系统 (左上角为原点) - 使用文字顶部位置
-              const viewportX = pdfX
-              const viewportY = viewport.height - pdfYTop // 转换到视口坐标系
-
-              // 计算相对位置百分比
-              const xPercent = (pdfX / viewport.width) * 100
-              const yPercent = (viewportY / viewport.height) * 100
-
-              // 获取上下文 - 前后各取一些文本
-              const itemPosition = paragraph.indexOf(item)
-              const contextStart = Math.max(0, itemPosition - 2)
-              const contextEnd = Math.min(paragraph.length, itemPosition + 3)
-              const context = paragraph
-                .slice(contextStart, contextEnd)
-                .map((p) => p.str)
-                .join(" ")
-
-    return {
-                pageIndex: pageIndex - 1,
-                textIndex,
-                paragraphIndex: paragraphIndex + 1,
-      text: customText || item.str,
-                x: viewportX, // 使用视口坐标作为显示坐标
-                y: viewportY, // 使用修正后的视口坐标（文字顶部）
-                width: item.width,
-                height: item.height,
-                context: context.length > 100 ? context.substring(0, 100) + "..." : context,
-                coordinates: {
-                  pdfCoordinates: {
-                    x: pdfX,
-                    y: pdfY, // 保留原始基线位置用于参考
-                    width: item.width,
-                    height: item.height,
-                  },
-                  viewportCoordinates: {
-                    x: viewportX,
-                    y: viewportY, // 使用文字顶部位置
-                    width: item.width,
-                    height: item.height,
-                  },
-                  transform: [...transform],
-                  pageSize: {
-                    width: viewport.width,
-                    height: viewport.height,
-                  },
-                  relativePosition: {
-                    xPercent: Math.round(xPercent * 100) / 100,
-                    yPercent: Math.round(yPercent * 100) / 100,
-                  },
-                },
-    }
-  }, [])
-
+  // 使用新的文本提取器进行搜索
   const searchText = useCallback(async (options?: {
     query?: string;
     targetPage?: number;
@@ -760,128 +341,37 @@ export default function PdfAnoPage() {
     const targetPage = options?.targetPage
     const returnFirst = options?.returnFirst || false
     
-    if (!pdfDoc || !queryText.trim()) {
+    if (!textExtractor.current || !queryText.trim()) {
       if (!returnFirst) {
         setSearchResults([])
       }
       return returnFirst ? null : undefined
     }
 
-    const results: SearchResult[] = []
-    const lowerQuery = queryText.toLowerCase()
-
     try {
-      const startPage = targetPage || 1
-      const endPage = targetPage || numPages
+      // 使用新的文本提取器
+      const results = await textExtractor.current.searchText({
+        query: queryText,
+        targetPage: targetPage,
+        returnFirst
+      })
 
-      for (let pageIndex = startPage; pageIndex <= endPage; pageIndex++) {
-        const page = await pdfDoc.getPage(pageIndex)
-        const textContent = await page.getTextContent()
-        const viewport = page.getViewport({ scale: 1 }) // 使用scale 1获取原始坐标
-
-        // 将文本项按Y坐标分组来识别段落
-        const textItems = textContent.items as TextItem[]
-        const sortedItems = textItems.sort((a, b) => {
-          const aY = viewport.height - a.transform[5]
-          const bY = viewport.height - b.transform[5]
-          return aY - bY
-        })
-
-        // 识别段落 - 基于Y坐标差异
-        const paragraphs: TextItem[][] = []
-        let currentParagraph: TextItem[] = []
-        let lastY = -1
-
-        sortedItems.forEach((item, index) => {
-          const currentY = viewport.height - item.transform[5]
-
-          // 如果Y坐标差异超过阈值，认为是新段落
-          if (lastY !== -1 && Math.abs(currentY - lastY) > 10) {
-            if (currentParagraph.length > 0) {
-              paragraphs.push([...currentParagraph])
-              currentParagraph = []
-            }
-          }
-
-          currentParagraph.push(item)
-          lastY = currentY
-
-          // 最后一个项目
-          if (index === sortedItems.length - 1 && currentParagraph.length > 0) {
-            paragraphs.push(currentParagraph)
-          }
-        })
-
-        // 在每个段落中搜索
-        paragraphs.forEach((paragraph, paragraphIndex) => {
-          paragraph.forEach((item, textIndex) => {
-            // 智能匹配检查（处理标点符号和空格问题）
-            if (smartTextMatch(queryText, item.str)) {
-              console.log(`✅ 智能单项匹配成功: "${item.str}" 匹配查询 "${queryText}"`)
-              const result = createSearchResult(item, pageIndex, textIndex, paragraphIndex, paragraph, viewport)
-              results.push(result)
-              
-              if (returnFirst) {
-                return // 注意：这里return只是退出forEach，不是退出函数
-              }
-            }
-            // 传统匹配作为后备
-            else if (item.str.toLowerCase().includes(lowerQuery)) {
-              const result = createSearchResult(item, pageIndex, textIndex, paragraphIndex, paragraph, viewport)
-              results.push(result)
-              
-              if (returnFirst) {
-                return // 注意：这里return只是退出forEach，不是退出函数
-              }
-            }
-          })
-
-          // 段落级别的智能搜索（对于跨TextItem的文本）
-          if (returnFirst && results.length === 0) {
-            const paragraphText = paragraph.map(item => item.str).join('')
-            const paragraphTextWithSpaces = paragraph.map(item => item.str).join(' ')
-            
-            if (smartTextMatch(queryText, paragraphText) || smartTextMatch(queryText, paragraphTextWithSpaces)) {
-              console.log(`✅ 智能段落匹配成功在页面 ${pageIndex} 段落 ${paragraphIndex + 1}`)
-              console.log(`   查询: "${queryText}"`)
-              console.log(`   匹配: "${paragraphText.substring(0, 100)}${paragraphText.length > 100 ? '...' : ''}"`)
-              
-              // 使用段落中间的项作为定位点
-              const middleIndex = Math.floor(paragraph.length / 2)
-              const item = paragraph[middleIndex] || paragraph[0]
-              const result = createSearchResult(item, pageIndex, middleIndex, paragraphIndex, paragraph, viewport, queryText)
-              results.push(result)
-            }
-          }
-        })
-
-        // 检查是否找到结果并需要立即返回
-        if (returnFirst && results.length > 0) {
-          const firstResult = results[0]
-          return {
-            pageIndex: firstResult.pageIndex,
-            x: firstResult.x,
-            y: firstResult.y,
-            width: firstResult.width,
-            height: firstResult.height,
-            text: firstResult.text,
-            pageSize: firstResult.coordinates.pageSize,
-          }
-        }
+      // 处理不同的返回类型
+      if (returnFirst) {
+        // 返回单个结果或null
+        return results as any // 程序化搜索的返回格式
+      } else {
+        // UI搜索：返回数组
+        const resultArray = Array.isArray(results) ? results : (results ? [results] : [])
+        setSearchResults(resultArray)
+        setCurrentSearchIndex(resultArray.length > 0 ? 0 : -1)
+        return undefined
       }
-
-      // 如果是UI搜索，更新状态
-      if (!returnFirst) {
-      setSearchResults(results)
-      setCurrentSearchIndex(results.length > 0 ? 0 : -1)
-      }
-
-      return returnFirst ? null : undefined
     } catch (err) {
-      console.error("Error searching text:", err)
+      console.error("使用文本提取器搜索失败:", err)
       return returnFirst ? null : undefined
     }
-  }, [pdfDoc, searchQuery, numPages, normalizeText, smartTextMatch, createSearchResult])
+  }, [searchQuery, textExtractor])
 
   // 跳转到搜索结果
   const goToSearchResult = useCallback(
@@ -899,486 +389,26 @@ export default function PdfAnoPage() {
     [searchResults],
   )
 
-  // 提取PDF全文内容
-  const extractPDFText = useCallback(async () => {
-    if (!pdfDoc) return ""
-
-    let fullText = ""
-
-    try {
-      for (let pageIndex = 1; pageIndex <= numPages; pageIndex++) {
-        const page = await pdfDoc.getPage(pageIndex)
-        const textContent = await page.getTextContent()
-        const textItems = textContent.items as TextItem[]
-
-        // 按页面添加文本，保持页面分隔
-        fullText += `\n--- 第${pageIndex}页 ---\n`
-
-        // 按Y坐标排序文本项
-        const sortedItems = textItems.sort((a, b) => {
-          const viewport = page.getViewport({ scale: 1 })
-          const aY = viewport.height - a.transform[5]
-          const bY = viewport.height - b.transform[5]
-          return aY - bY
-        })
-
-        // 组合文本，保持原有格式
-        let currentLine = ""
-        let lastY = -1
-
-        sortedItems.forEach((item) => {
-          const viewport = page.getViewport({ scale: 1 })
-          const currentY = viewport.height - item.transform[5]
-
-          // 如果Y坐标差异较大，认为是新行
-          if (lastY !== -1 && Math.abs(currentY - lastY) > 5) {
-            if (currentLine.trim()) {
-              fullText += currentLine.trim() + "\n"
-            }
-            currentLine = ""
-          }
-
-          currentLine += item.str + " "
-          lastY = currentY
-        })
-
-        // 添加最后一行
-        if (currentLine.trim()) {
-          fullText += currentLine.trim() + "\n"
-        }
-      }
-
-      return fullText
-    } catch (err) {
-      console.error("Error extracting PDF text:", err)
-      return ""
-    }
-  }, [pdfDoc, numPages])
-
-  // 调用DeepSeek API进行批注
-  const callDeepSeekAPI = useCallback(async (pdfText: string) => {
-    const prompt = `你是一位有着20年教学科研经验的资深本科论文指导教师，请以严谨而耐心的态度对这篇本科生论文进行详细批注。
-
-作为论文指导老师，请从以下角度进行评阅：
-
-1. **论文结构与逻辑**：
-   - 检查论文整体框架是否完整（摘要、引言、文献综述、研究方法、结果分析、结论等）
-   - 各章节之间的逻辑关系是否清晰
-   - 论证过程是否严密，有无逻辑跳跃或断裂
-   - 研究问题、研究方法与结论是否一致
-
-2. **学术规范与格式**：
-   - 检查论文整体框架是否完整（摘要、引言、文献综述、研究方法、结果分析、结论等）
-   - 各章节之间的逻辑关系是否清晰
-   - 论证过程是否严密，有无逻辑跳跃或断裂
-   - 研究问题、研究方法与结论是否一致
-
-3. **学术写作质量**：
-   - 检查论文整体框架是否完整（摘要、引言、文献综述、研究方法、结果分析、结论等）
-   - 各章节之间的逻辑关系是否清晰
-   - 论证过程是否严密，有无逻辑跳跃或断裂
-   - 研究问题、研究方法与结论是否一致
-
-4. **研究内容评估**：
-   - 检查论文整体框架是否完整（摘要、引言、文献综述、研究方法、结果分析、结论等）
-   - 各章节之间的逻辑关系是否清晰
-   - 论证过程是否严密，有无逻辑跳跃或断裂
-   - 研究问题、研究方法与结论是否一致
-
-5. **改进指导**：
-   - 检查论文整体框架是否完整（摘要、引言、文献综述、研究方法、结果分析、结论等）
-   - 各章节之间的逻辑关系是否清晰
-   - 论证过程是否严密，有无逻辑跳跃或断裂
-   - 研究问题、研究方法与结论是否一致
-
-请以温和而专业的教师语气进行批注，既要指出问题，也要给予鼓励和具体的改进建议。
-
-注意：请严格避免使用任何表情符号、emoji或特殊字符，确保输出内容完全兼容PDF注释格式。
-
-请按照以下自定义格式返回批注结果，每条批注用"---ANNOTATION---"分隔：
-
-格式说明：
-
----ANNOTATION---
-TYPE: 批注类型（structure/format/writing/content/praise）
-SEVERITY: 重要程度（high/medium/low）  
-PAGE: 页码
-TITLE: 批注标题
-DESCRIPTION: 详细说明（以教师的语气）
-SUGGESTION: 具体修改建议
-SELECTED: 请从原文中精确复制2-8个连续字符，确保这些文字在PDF原文中完全一致存在（包括标点符号），不要改写或总结，直接摘取原文片段作为定位锚点。如果无法找到合适的原文片段，请填写"无特定位置"
----ANNOTATION---
-
-重要提醒：SELECTED字段必须是原文的精确复制，不允许任何改写、总结或意译，这是用于在PDF中精确定位批注位置的关键信息。
-
-请开始评阅这篇本科生论文：
-
-${pdfText}`
-
-    try {
-      console.log("Calling DeepSeek API with prompt length:", prompt.length)
-
-      const response = await fetch("/api/deepseek", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt: prompt,
-          model: "deepseek-chat",
-        }),
-      })
-
-      console.log("API response status:", response.status)
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        console.error("API request failed:", errorData)
-
-        // Provide specific error messages based on status code
-        let errorMessage = "AI服务调用失败"
-        if (response.status === 404) {
-          errorMessage = "AI服务端点未找到，请检查配置"
-        } else if (response.status === 401) {
-          errorMessage = "API密钥无效，请检查配置"
-        } else if (response.status === 403) {
-          errorMessage = "API访问被拒绝，请检查权限"
-        } else if (response.status === 429) {
-          errorMessage = "API调用频率超限，请稍后重试"
-        } else if (response.status >= 500) {
-          errorMessage = "AI服务暂时不可用，请稍后重试"
-        }
-
-        throw new Error(`${errorMessage} (${response.status})`)
-      }
-
-      const data = await response.json()
-      console.log("API response data:", data)
-
-      if (!data.content) {
-        console.error("No content in API response:", data)
-        throw new Error("AI返回数据格式错误：缺少content字段")
-      }
-
-      return data.content
-    } catch (err) {
-      console.error("Error calling DeepSeek API:", err)
-
-      // 如果是网络错误或API错误，提供更详细的错误信息
-      if ((err as any).message?.includes("fetch")) {
-        throw new Error("网络连接错误，请检查网络连接后重试")
-      } else if ((err as any).message?.includes("AI服务")) {
-        throw err // 重新抛出API相关错误
-      } else {
-        throw new Error(`调用AI服务时发生错误: ${(err as any).message}`)
-      }
-    }
-  }, [])
-
-  // 解析批注结果
-  const parseAnnotations = useCallback((apiResponse: string) => {
-    const annotationBlocks = apiResponse.split("---ANNOTATION---").filter((block) => block.trim())
-    const parsedAnnotations: any[] = []
-
-    annotationBlocks.forEach((block, index) => {
-      const lines = block.trim().split("\n")
-      const annotation: any = {}
-
-      lines.forEach((line) => {
-        const [key, ...valueParts] = line.split(":")
-        if (key && valueParts.length > 0) {
-          const value = valueParts.join(":").trim()
-          switch (key.trim().toUpperCase()) {
-            case "TYPE":
-              annotation.type = value
-              break
-            case "SEVERITY":
-              annotation.severity = value
-              break
-            case "PAGE":
-              annotation.page = Number.parseInt(value) || 1
-              break
-            case "TITLE":
-              annotation.title = value
-              break
-            case "DESCRIPTION":
-              annotation.description = value
-              break
-            case "SUGGESTION":
-              annotation.suggestion = value
-              break
-            case "SELECTED":
-              annotation.selected = value
-              break
-          }
-        }
-      })
-
-      if (annotation.title && annotation.description) {
-        parsedAnnotations.push({
-          id: `auto-${Date.now()}-${index}`,
-          ...annotation,
-          isAutoGenerated: true,
-        })
-      }
-    })
-
-    return parsedAnnotations
-  }, [])
 
 
-
-  // 执行自动批注
+  // 使用AI服务进行自动批注
   const performAutoAnnotation = useCallback(async () => {
-    if (!pdfDoc || isAutoAnnotating) return
+    if (!aiAnnotationService.current || isAutoAnnotating) return
 
     setIsAutoAnnotating(true)
     setActiveTab("annotations") // 自动切换到批注标签页
-    setAutoAnnotationProgress("正在提取PDF文本...")
+    setAutoAnnotationProgress("正在启动AI批注...")
     setDebugInfo([]) // 清空调试信息
     setShowDebugPanel(false) // 隐藏调试面板
 
     try {
-      // 1. 提取PDF文本
-      const pdfText = await extractPDFText()
-      if (!pdfText.trim()) {
-        throw new Error("无法提取PDF文本内容")
-      }
+      const result = await aiAnnotationService.current.performAutoAnnotation()
 
-      setAutoAnnotationProgress("正在调用AI模型生成批注...")
+      // 添加到批注列表
+      setAnnotations(prev => [...prev, ...result])
 
-      // 2. 调用DeepSeek API
-      const apiResponse = await callDeepSeekAPI(pdfText)
-
-      setAutoAnnotationProgress("正在解析批注结果...")
-
-      // 3. 解析批注结果
-      const parsedAnnotations = parseAnnotations(apiResponse)
-
-      if (parsedAnnotations.length === 0) {
-        throw new Error("未能解析出有效的批注内容")
-      }
-
-      setAutoAnnotationProgress("正在定位批注位置...")
-
-      // 4. 为每个批注找到在PDF中的位置
-      const locatedAnnotations: Annotation[] = []
-      let successfulLocations = 0
-      let failedLocations = 0
-      const currentDebugInfo: typeof debugInfo = []
-
-      setDebugInfo([]) // 清空之前的调试信息
-
-      for (const annotation of parsedAnnotations) {
-        console.log(`🔍 正在查找文本: "${annotation.selected}" (页面: ${annotation.page})`)
-        setAutoAnnotationProgress(`正在定位批注 ${parsedAnnotations.indexOf(annotation) + 1}/${parsedAnnotations.length}: "${annotation.selected.substring(0, 20)}${annotation.selected.length > 20 ? '...' : ''}"`)
-        
-        // 先在指定页面搜索
-        let location = null
-        if (annotation.page && annotation.selected !== "无特定位置") {
-          console.log(`🎯 首先在页面 ${annotation.page} 搜索: "${annotation.selected}"`)
-          location = await searchText({
-            query: annotation.selected,
-            targetPage: annotation.page,
-            returnFirst: true
-          })
-        }
-        
-        // 如果指定页面找不到，则搜索全部页面
-        if (!location && annotation.selected !== "无特定位置") {
-          console.log(`🔍 页面 ${annotation.page} 未找到，搜索全部页面: "${annotation.selected}"`)
-          location = await searchText({
-            query: annotation.selected,
-            returnFirst: true  // 不指定targetPage，搜索全部页面
-          })
-
-        if (location) {
-            console.log(`✅ 在页面 ${location.pageIndex + 1} 找到文本，而不是AI建议的页面 ${annotation.page}`)
-          }
-        }
-
-        if (location) {
-          successfulLocations++
-          const coordinatesInfo = {
-            viewport: { x: location.x.toFixed(2), y: location.y.toFixed(2) },
-            pdf: { 
-              x: location.x.toFixed(2), 
-              y: (location.pageSize.height - location.y).toFixed(2) 
-            },
-            size: { w: location.width.toFixed(2), h: location.height.toFixed(2) },
-            pageSize: { 
-              w: location.pageSize.width.toFixed(0), 
-              h: location.pageSize.height.toFixed(0) 
-            }
-          }
-          
-          console.log(`✅ 找到文本位置:`, {
-            text: annotation.selected,
-            page: location.pageIndex + 1,
-            coordinates: coordinatesInfo
-          })
-
-          // 添加到调试信息
-          currentDebugInfo.push({
-            text: annotation.selected,
-            page: annotation.page || location.pageIndex + 1,
-            found: true,
-            coordinates: coordinatesInfo,
-            actualPage: location.pageIndex + 1,
-            searchStrategy: annotation.page && location.pageIndex + 1 !== annotation.page 
-              ? `指定页面(${annotation.page})未找到，全页面搜索成功` 
-              : annotation.page 
-                ? `指定页面(${annotation.page})搜索成功`
-                : `全页面搜索成功`
-          })
-
-          // 使用与搜索结果相同的坐标计算方法
-          const mergedContent = mergeAnnotationContent({
-            selectedText: annotation.selected,
-            title: annotation.title,
-            description: annotation.description,
-            suggestion: annotation.suggestion,
-            annotationType: annotation.type,
-            severity: annotation.severity,
-          })
-
-          locatedAnnotations.push({
-            id: annotation.id,
-            pageIndex: location.pageIndex,
-            x: location.x,
-            y: location.y,
-            width: location.width,
-            height: location.height,
-            content: annotation.title,
-            type: "highlight",
-            author: addDefaultAuthorInfo("AI助手"),
-            timestamp: getCurrentTimestamp(),
-            isExpanded: false,
-            aiAnnotation: {
-              selectedText: annotation.selected,
-              mergedContent: mergedContent,
-              originalData: {
-                title: annotation.title,
-                description: annotation.description,
-                suggestion: annotation.suggestion,
-                annotationType: annotation.type,
-                severity: annotation.severity,
-              }
-            },
-            // 添加坐标信息，与搜索结果保持一致
-            coordinates: {
-              pdfCoordinates: {
-                x: location.x,
-                y: location.pageSize.height - location.y, // 转换为PDF坐标系
-                width: location.width,
-                height: location.height,
-              },
-              viewportCoordinates: {
-                x: location.x,
-                y: location.y,
-                width: location.width,
-                height: location.height,
-              },
-              pageSize: location.pageSize,
-            },
-          })
-        } else {
-          failedLocations++
-          console.log(`❌ 未找到文本: "${annotation.selected}" (页面: ${annotation.page})`)
-          
-          const pageIndex = Math.max(0, (annotation.page || 1) - 1)
-          const existingAnnotationsOnPage = locatedAnnotations.filter((a) => a.pageIndex === pageIndex).length
-          const fallbackX = 50
-          const fallbackY = 50 + existingAnnotationsOnPage * 30
-          
-          console.log(`📍 使用默认位置: 页面 ${pageIndex + 1}, 坐标 (${fallbackX}, ${fallbackY})`)
-          
-          // 添加到调试信息
-          currentDebugInfo.push({
-            text: annotation.selected,
-            page: annotation.page || pageIndex + 1,
-            found: false,
-            fallbackCoordinates: { x: fallbackX, y: fallbackY },
-            searchStrategy: annotation.page 
-              ? `指定页面(${annotation.page})和全页面搜索均未找到`
-              : `全页面搜索未找到`
-          })
-          
-          // 创建fallback坐标信息
-          const fallbackCoordinates = await createCoordinatesFromLegacy({
-            x: fallbackX,
-            y: fallbackY,
-            width: 100,
-            height: 20,
-            pageIndex: pageIndex
-          })
-          
-          const mergedContentFallback = mergeAnnotationContent({
-            selectedText: annotation.selected,
-            title: annotation.title,
-            description: annotation.description,
-            suggestion: annotation.suggestion,
-            annotationType: annotation.type,
-            severity: annotation.severity,
-          })
-
-          locatedAnnotations.push({
-            id: annotation.id,
-            pageIndex: pageIndex,
-            x: fallbackX,
-            y: fallbackY,
-            width: 100,
-            height: 20,
-            content: annotation.title,
-            type: "highlight",
-            author: addDefaultAuthorInfo("AI助手"),
-            timestamp: getCurrentTimestamp(),
-            isExpanded: false,
-            aiAnnotation: {
-              selectedText: annotation.selected,
-              mergedContent: mergedContentFallback,
-              originalData: {
-                title: annotation.title,
-                description: annotation.description,
-                suggestion: annotation.suggestion,
-                annotationType: annotation.type,
-                severity: annotation.severity,
-              }
-            },
-            coordinates: fallbackCoordinates || {
-              pdfCoordinates: { x: fallbackX, y: fallbackY, width: 100, height: 20 },
-              viewportCoordinates: { x: fallbackX, y: fallbackY, width: 100, height: 20 },
-              pageSize: { width: 612, height: 792 }
-            }
-          })
-        }
-      }
-
-      const directHits = currentDebugInfo.filter(info => info.found && info.actualPage === info.page).length
-      const globalSearchHits = currentDebugInfo.filter(info => info.found && info.actualPage !== info.page).length
+      setAutoAnnotationProgress(`AI批注完成！共生成 ${result.length} 条批注`)
       
-      console.log(`📊 文本定位统计:`)
-      console.log(`   总计: ${parsedAnnotations.length} 个批注`)
-      console.log(`   成功: ${successfulLocations} 个 (${Math.round(successfulLocations/parsedAnnotations.length*100)}%)`)
-      console.log(`   失败: ${failedLocations} 个 (${Math.round(failedLocations/parsedAnnotations.length*100)}%)`)
-      console.log(`📍 搜索策略详情:`)
-      console.log(`   指定页面直接找到: ${directHits} 个`)
-      console.log(`   全页面搜索救援: ${globalSearchHits} 个`)
-      console.log(`   完全未找到: ${failedLocations} 个`)
-
-      // 更新调试信息
-      setDebugInfo(currentDebugInfo)
-
-      // 5. 添加到批注列表
-      setAnnotations((prev) => [...prev, ...locatedAnnotations])
-
-      setAutoAnnotationProgress(`AI批注完成！共生成 ${locatedAnnotations.length} 条批注`)
-      
-      // 显示调试面板，让用户查看定位结果
-      if (currentDebugInfo.length > 0) {
-        setShowDebugPanel(true)
-      }
-
       // 5秒后清除进度信息
       setTimeout(() => {
         setAutoAnnotationProgress("")
@@ -1394,11 +424,34 @@ ${pdfText}`
     } finally {
       setIsAutoAnnotating(false)
     }
-  }, [pdfDoc, isAutoAnnotating, extractPDFText, callDeepSeekAPI, parseAnnotations, searchText])
+  }, [aiAnnotationService.current, isAutoAnnotating])
+
+  // 初始化AI批注服务
+  useEffect(() => {
+    if (!pdfDoc || !textExtractor.current) return
+    
+    aiAnnotationService.current = createAIAnnotationService({
+      onDebugInfo: (info) => {
+        setDebugInfo(info)
+        setShowDebugPanel(true) // 自动显示调试面板
+      }
+    })
+    aiAnnotationService.current.initialize(pdfDoc, textExtractor.current, searchText)
+  }, [pdfDoc, textExtractor.current, searchText])
 
   // 缩放控制
-  const zoomIn = () => setScale((prev) => Math.min(prev + 0.25, 3))
-  const zoomOut = () => setScale((prev) => Math.max(prev - 0.25, 0.5))
+  // 缩放控制器实例
+  const scaleController = useRef(new ScaleController(1.5, 0.5, 3.0, 0.25))
+
+  const zoomIn = () => {
+    const newScale = scaleController.current.zoomIn()
+    setScale(newScale)
+  }
+
+  const zoomOut = () => {
+    const newScale = scaleController.current.zoomOut()
+    setScale(newScale)
+  }
 
   // 处理面板大小调整
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -1476,34 +529,19 @@ ${pdfText}`
   }, [isResizing, handleMouseMove, handleMouseUp])
 
   // Update the scale change effect to properly handle re-rendering
+  // 监听scale变化，更新渲染器缩放
   useEffect(() => {
-    if (pdfDoc) {
-      // Cancel all ongoing render tasks
-      renderTasks.current.forEach((task, pageNumber) => {
-        task.cancel()
-      })
-      renderTasks.current.clear()
-
-      // Clear rendered pages to force re-render
-      renderedPages.current.clear()
-
-      // Re-observe all page elements for lazy loading
-      setTimeout(() => {
-        const pageElements = document.querySelectorAll("[data-page]")
-        pageElements.forEach((element) => {
-          observerRef.current?.observe(element)
-        })
-      }, 100)
+    if (pdfRenderer.current) {
+      pdfRenderer.current.updateScale(scale)
+      scaleController.current.setScale(scale)
     }
-  }, [scale, pdfDoc])
+    // 清除旧的渲染状态
+    renderedPages.current.clear()
+  }, [scale])
 
-  // Add cleanup on component unmount
+  // 组件卸载时清理
   useEffect(() => {
     return () => {
-      // Cancel all render tasks on cleanup
-      renderTasks.current.forEach((task) => {
-        task.cancel()
-      })
       renderTasks.current.clear()
     }
   }, [])
@@ -1679,8 +717,8 @@ ${pdfText}`
                   data-page={pageNumber}
                   className="relative bg-white shadow-lg"
                   ref={(el) => {
-                    if (el && observerRef.current) {
-                      observerRef.current.observe(el)
+                    if (el && pdfRenderer.current) {
+                      pdfRenderer.current.observePage(el)
                     }
                   }}
                 >
@@ -1688,6 +726,10 @@ ${pdfText}`
                     ref={(canvas) => {
                       if (canvas) {
                         pageRefs.current.set(pageNumber, canvas)
+                        // 同时设置到PDF渲染器
+                        if (pdfRenderer.current) {
+                          pdfRenderer.current.setPageRef(pageNumber, canvas)
+                        }
                       }
                     }}
                     className="w-full cursor-default"
@@ -1991,7 +1033,7 @@ ${pdfText}`
                               <div>
                                 <div className="font-medium text-red-600">变换矩阵:</div>
                                 <div className="text-xs font-mono">
-                                  [{result.coordinates.transform.map((t) => t.toFixed(1)).join(", ")}]
+                                  [{result.coordinates.transform.map((t: number) => t.toFixed(1)).join(", ")}]
                                 </div>
                               </div>
                               <div>
