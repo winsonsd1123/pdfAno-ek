@@ -44,6 +44,12 @@ export function PdfToolbar({ docName, onToggleDebugPanel, showDebugPanel }: PdfT
 
   const [isExporting, setIsExporting] = useState(false)
 
+  // 添加标题截断函数
+  const truncateTitle = (title: string, maxLength: number = 10) => {
+    if (title.length <= maxLength) return title;
+    return title.slice(0, maxLength) + '...';
+  };
+
   const handleExport = async () => {
     setIsExporting(true)
     const toastId = toast.loading("正在导出PDF，请稍候...")
@@ -110,8 +116,8 @@ export function PdfToolbar({ docName, onToggleDebugPanel, showDebugPanel }: PdfT
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
           <FileText className="h-5 w-5 text-gray-700" />
-          <span className="font-medium text-gray-900 max-w-xs truncate" title={docName}>
-            {docName}
+          <span className="font-medium text-gray-900" title={docName}>
+            {truncateTitle(docName)}
           </span>
         </div>
         <Badge variant="outline">{currentPage} / {numPages}</Badge>

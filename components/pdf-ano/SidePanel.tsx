@@ -128,12 +128,6 @@ function AnnotationsTab() {
 
   return (
     <Card className="flex-1 flex flex-col">
-      <CardHeader className="flex-shrink-0">
-        <CardTitle className="flex items-center gap-2">
-          <MessageSquare className="w-4 h-4" />
-          Annotations ({annotations.length})
-        </CardTitle>
-      </CardHeader>
       <CardContent className="p-1 flex-1 flex flex-col space-y-2">
         <div ref={annotationPanelRef} className="space-y-1 flex-1 overflow-y-auto max-h-[calc(100vh-160px)]">
           {sortAnnotations(annotations).map((annotation) => (
@@ -360,8 +354,8 @@ export function SidePanel({ showDebugPanel }: { showDebugPanel: boolean }) {
       <div className="bg-white border-l flex flex-col fixed right-0 top-0 bottom-0" style={{ width: `${panelWidth}px` }}>
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 m-4">
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="search">Search</TabsTrigger>
-            <TabsTrigger value="annotations">Annotations ({annotations.length})</TabsTrigger>
+            <TabsTrigger value="search">搜索</TabsTrigger>
+            <TabsTrigger value="annotations">批注 ({annotations.length})</TabsTrigger>
           </TabsList>
           
           <TabsContent value="search" className="flex-1 space-y-4">
