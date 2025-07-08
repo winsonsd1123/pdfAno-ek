@@ -12,7 +12,7 @@ const DEFAULT_CONFIG: AIAnnotationConfig = {
   model: "deepseek-chat",
   prompt: "",
   maxRetries: 3,
-  timeout: 30000 // 30秒超时
+  timeout: 90000 // 90秒超时
 }
 
 /**

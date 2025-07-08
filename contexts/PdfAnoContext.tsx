@@ -29,6 +29,7 @@ import { addDefaultAuthorInfo, getCurrentTimestamp } from "@/lib/annotation-util
 interface PdfAnoContextState {
   pdfDoc: PDFDocumentProxy | null
   numPages: number
+  currentPage: number  // 新增：当前页码
   scale: number
   annotations: Annotation[]
   selectedAnnotation: Annotation | null
@@ -41,6 +42,8 @@ interface PdfAnoContextState {
   debugInfo: DebugInfo[]
   editingContent: string
   panelWidth: number
+  isManualAnnotationMode: boolean // 新增：手动批注模式状态
+  docUrl: string // 新增：文档URL，用于导出等操作
   // Refs exposed for specific components
   containerRef: React.RefObject<HTMLDivElement | null>
   pageRefs: React.RefObject<Map<number, HTMLCanvasElement>>
@@ -55,11 +58,15 @@ interface PdfAnoContextActions {
   setSelectedAnnotation: React.Dispatch<React.SetStateAction<Annotation | null>>
   setEditingContent: React.Dispatch<React.SetStateAction<string>>
   setPanelWidth: React.Dispatch<React.SetStateAction<number>>
+  setCurrentPage: React.Dispatch<React.SetStateAction<number>>  // 新增：设置当前页码
   zoomIn: () => void
   zoomOut: () => void
   searchText: (options?: { query?: string; targetPage?: number; returnFirst?: boolean }) => Promise<any>
   goToSearchResult: (index: number) => void
   performAutoAnnotation: () => Promise<void>
+  toggleManualAnnotationMode: () => void // 新增：切换手动模式
+  addManualAnnotation: (pageIndex: number, rect: { x: number; y: number; width: number; height: number }) => Promise<void>
+  extractTextFromRect: (pageIndex: number, rect: { x: number; y: number; width: number; height: number }) => Promise<string>
   handleEditAnnotation: (annotation: Annotation, newContent: string) => void
   handleEditReply: (annotationId: string, replyId: string, newContent: string) => void
   toggleAnnotationEditMode: (annotation: Annotation) => void
@@ -67,6 +74,7 @@ interface PdfAnoContextActions {
   sortAnnotations: (annotations: Annotation[]) => Annotation[]
   scrollToAnnotationItem: (annotationId: string) => void
   setDebugInfo: React.Dispatch<React.SetStateAction<DebugInfo[]>>
+  deleteAnnotation: (annotationId: string) => void // 新增：删除批注功能
 }
 
 // 合并状态和操作
@@ -85,6 +93,7 @@ interface PdfAnoProviderProps {
 export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [numPages, setNumPages] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)  // 新增：当前页码状态
   const [scale, setScale] = useState(1.5)
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [selectedAnnotation, setSelectedAnnotation] = useState<Annotation | null>(null)
@@ -97,6 +106,7 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
   const [debugInfo, setDebugInfo] = useState<DebugInfo[]>([])
   const [editingContent, setEditingContent] = useState("")
   const [panelWidth, setPanelWidth] = useState(450)
+  const [isManualAnnotationMode, setIsManualAnnotationMode] = useState(false)
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const pageRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -208,6 +218,157 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
   const zoomIn = () => setScale(scaleController.current.zoomIn())
   const zoomOut = () => setScale(scaleController.current.zoomOut())
 
+  const toggleManualAnnotationMode = useCallback(() => {
+    setIsManualAnnotationMode(prev => !prev)
+  }, [])
+
+  const extractTextFromRect = useCallback(async (
+    pageIndex: number, 
+    rect: { x: number; y: number; width: number; height: number }
+  ): Promise<string> => {
+    if (!pdfDoc) return ""
+
+    try {
+      const page = await pdfDoc.getPage(pageIndex + 1)
+      const textContent = await page.getTextContent()
+      const viewport = page.getViewport({ scale: 1 })
+      
+      const textItems = textContent.items as any[]
+      const overlappingItems: { item: any; y: number; x: number }[] = []
+
+      // 遍历所有文本项，找出与矩形重叠的项
+      textItems.forEach((item) => {
+        if (!item.transform) return
+
+        const itemX = item.transform[4]
+        const itemY = item.transform[5]
+        const itemWidth = item.width || 0
+        const itemHeight = item.height || 10 // 默认高度
+
+        // 检查文本项是否与选择矩形重叠
+        const itemLeft = itemX
+        const itemRight = itemX + itemWidth
+        const itemTop = viewport.height - (itemY + itemHeight) // 转换为视口坐标
+        const itemBottom = viewport.height - itemY
+
+        const rectLeft = rect.x
+        const rectRight = rect.x + rect.width
+        const rectTop = rect.y
+        const rectBottom = rect.y + rect.height
+
+        // 矩形重叠检测
+        const overlaps = !(
+          itemRight < rectLeft || 
+          itemLeft > rectRight || 
+          itemBottom < rectTop || 
+          itemTop > rectBottom
+        )
+
+        if (overlaps && item.str?.trim()) {
+          overlappingItems.push({
+            item,
+            y: itemTop,
+            x: itemLeft
+          })
+        }
+      })
+
+      // 按位置排序：先按Y坐标（从上到下），再按X坐标（从左到右）
+      overlappingItems.sort((a, b) => {
+        const yDiff = a.y - b.y
+        if (Math.abs(yDiff) > 5) return yDiff // Y坐标差距大于5像素认为是不同行
+        return a.x - b.x // 同一行内按X坐标排序
+      })
+
+      // 拼接文本，保持行的结构
+      let result = ""
+      let lastY = -1
+      
+      overlappingItems.forEach(({ item, y }) => {
+        if (lastY !== -1 && Math.abs(y - lastY) > 5) {
+          result += " " // 不同行之间用空格分隔
+        }
+        result += item.str
+        lastY = y
+      })
+
+      return result.trim()
+    } catch (err) {
+      console.error("Extract text from rect failed:", err)
+      return ""
+    }
+  }, [pdfDoc])
+
+  const addManualAnnotation = useCallback(async (
+    pageIndex: number,
+    rect: { x: number; y: number; width: number; height: number }
+  ): Promise<void> => {
+    if (!pdfDoc) return
+
+    try {
+      // 提取文本内容
+      const extractedText = await extractTextFromRect(pageIndex, rect)
+      if (!extractedText.trim()) {
+        console.warn("No text found in selected area")
+        return
+      }
+
+      // 创建坐标信息
+      const page = await pdfDoc.getPage(pageIndex + 1)
+      const viewport = page.getViewport({ scale: 1 })
+      
+      // 将视口坐标转换为PDF坐标
+      const pdfRect = {
+        x: rect.x,
+        y: viewport.height - rect.y - rect.height, // 转换到PDF坐标系（左下角为原点）
+        width: rect.width,
+        height: rect.height
+      }
+
+      const coordinates = {
+        pdfCoordinates: pdfRect,
+        viewportCoordinates: rect,
+        pageSize: {
+          width: viewport.width,
+          height: viewport.height
+        }
+      }
+
+      // 创建新的批注对象
+      const authorInfo = addDefaultAuthorInfo("手动批注者")
+      const newAnnotation: Annotation = {
+        id: `manual-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type: "highlight",
+        content: extractedText,
+        author: authorInfo,
+        pageIndex,
+        coordinates,
+        timestamp: getCurrentTimestamp(),
+        isEditing: true,
+        isExpanded: true,
+        // 添加 aiAnnotation 结构，使其显示效果与 AI 批注一致
+        aiAnnotation: {
+          selectedText: extractedText,
+          mergedContent: "",
+          originalData: {
+            title: "手动批注",
+            description: "",
+            suggestion: "等待用户输入批注内容",
+            annotationType: "manual",
+            severity: "medium"
+          }
+        }
+      }
+
+      // 添加到批注列表并设置为选中状态
+      setAnnotations(prev => [...prev, newAnnotation])
+      setSelectedAnnotation(newAnnotation)
+      setEditingContent("")
+    } catch (err) {
+      console.error("Add manual annotation failed:", err)
+    }
+  }, [pdfDoc, extractTextFromRect])
+
   const goToSearchResult = useCallback((index: number) => {
     if (index < 0 || index >= searchResults.length) return
     const result = searchResults[index]
@@ -238,12 +399,25 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
   }, [isAutoAnnotating])
 
   const handleEditAnnotation = useCallback((annotation: Annotation, newContent: string) => {
+    // 如果是手动批注且内容为空，不允许保存
+    if (annotation.aiAnnotation?.originalData.annotationType === "manual" && !newContent.trim()) {
+      console.warn("手动批注内容不能为空")
+      return
+    }
+
     setAnnotations(prev => prev.map(a => 
       a.id === annotation.id ? {
         ...a, 
         isEditing: false,
         content: newContent,
-        aiAnnotation: a.aiAnnotation ? { ...a.aiAnnotation, mergedContent: newContent } : undefined
+        aiAnnotation: a.aiAnnotation ? { 
+          ...a.aiAnnotation, 
+          mergedContent: newContent,
+          originalData: {
+            ...a.aiAnnotation.originalData,
+            description: newContent // 更新description为用户输入的内容
+          }
+        } : undefined
       } : a
     ))
   }, [])
@@ -260,6 +434,17 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
   }, [])
 
   const toggleAnnotationEditMode = useCallback((annotation: Annotation) => {
+    // 如果是手动批注，且正在编辑，且内容为空，则删除该批注
+    if (
+      annotation.isEditing && 
+      annotation.aiAnnotation?.originalData.annotationType === "manual" &&
+      !annotation.aiAnnotation.mergedContent.trim()
+    ) {
+      setAnnotations(prev => prev.filter(a => a.id !== annotation.id))
+      setSelectedAnnotation(null)
+      return
+    }
+
     setEditingContent(annotation.aiAnnotation?.mergedContent || annotation.content)
     setAnnotations(prev => prev.map(a => 
       a.id === annotation.id ? { ...a, isEditing: !a.isEditing } : { ...a, isEditing: false }
@@ -278,11 +463,17 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
     ))
   }, [])
 
+  // 添加删除批注的函数
+  const deleteAnnotation = useCallback((annotationId: string) => {
+    setAnnotations(prev => prev.filter(a => a.id !== annotationId))
+    setSelectedAnnotation(null)
+  }, [])
 
   const value: PdfAnoContextType = {
     // State
     pdfDoc,
     numPages,
+    currentPage,
     scale,
     annotations,
     selectedAnnotation,
@@ -295,6 +486,8 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
     debugInfo,
     editingContent,
     panelWidth,
+    isManualAnnotationMode,
+    docUrl, // 新增：将docUrl暴露给Context消费者
     // Refs
     containerRef,
     pageRefs,
@@ -306,11 +499,15 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
     setSelectedAnnotation,
     setEditingContent,
     setPanelWidth,
+    setCurrentPage,  // 新增：暴露 setCurrentPage 方法
     zoomIn,
     zoomOut,
     searchText,
     goToSearchResult,
     performAutoAnnotation,
+    toggleManualAnnotationMode,
+    addManualAnnotation,
+    extractTextFromRect,
     handleEditAnnotation,
     handleEditReply,
     toggleAnnotationEditMode,
@@ -318,6 +515,7 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
     sortAnnotations,
     scrollToAnnotationItem,
     setDebugInfo,
+    deleteAnnotation, // 添加删除功能到Context
   }
 
   return <PdfAnoContext.Provider value={value}>{children}</PdfAnoContext.Provider>

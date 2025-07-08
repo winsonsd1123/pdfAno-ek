@@ -10,9 +10,15 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { AnnotationBubble, AnnotationContent, AnnotationHeader, AnnotationBody } from "@/components/ui/annotation-bubble"
 import { AnnotationIcon, AnnotationAuthorName } from "@/components/ui/annotation-icon"
 import { QuotedText } from "@/components/ui/quoted-text"
-import { Search, MessageSquare, MapPin } from "lucide-react"
+import { Search, MessageSquare, MapPin, MoreVertical, Trash2 } from "lucide-react"
 import { usePdfAnoContext } from '@/contexts/PdfAnoContext'
 import { addDefaultAuthorInfo, getCurrentTimestamp, formatTimestamp } from '@/lib/annotation-utils'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 // Internal Component for Search Tab
 function SearchTab({ showCoordinates, onToggleCoordinates, onSearch }: { showCoordinates: boolean; onToggleCoordinates: () => void, onSearch: (query: string) => void }) {
@@ -82,6 +88,25 @@ function SearchTab({ showCoordinates, onToggleCoordinates, onSearch }: { showCoo
   )
 }
 
+// 添加删除菜单组件
+function DeleteMenu({ onDelete }: { onDelete: () => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" className="h-8 w-8 p-0">
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={onDelete} className="text-red-600">
+          <Trash2 className="mr-2 h-4 w-4" />
+          删除
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 // Internal Component for Annotations Tab
 function AnnotationsTab() {
   const {
@@ -98,6 +123,7 @@ function AnnotationsTab() {
     handleEditReply,
     toggleAnnotationEditMode,
     toggleReplyEditMode,
+    deleteAnnotation,
   } = usePdfAnoContext()
 
   return (
@@ -109,7 +135,7 @@ function AnnotationsTab() {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-1 flex-1 flex flex-col space-y-2">
-        <div ref={annotationPanelRef} className="space-y-1 flex-1 overflow-y-auto max-h-[calc(100vh-250px)]">
+        <div ref={annotationPanelRef} className="space-y-1 flex-1 overflow-y-auto max-h-[calc(100vh-160px)]">
           {sortAnnotations(annotations).map((annotation) => (
             <AnnotationBubble
               key={annotation.id}
@@ -117,8 +143,6 @@ function AnnotationsTab() {
               onClick={() => {
                 setAnnotations((prev) => prev.map((a) => a.id === annotation.id ? { ...a, isExpanded: !a.isExpanded } : a))
                 setSelectedAnnotation(annotation)
-                const pageElement = document.getElementById(`page-${annotation.pageIndex + 1}`)
-                if (pageElement) pageElement.scrollIntoView({ behavior: "smooth", block: "center" })
               }}
             >
               <div className="flex w-full gap-2">
@@ -127,9 +151,14 @@ function AnnotationsTab() {
                 </div>
                 <AnnotationContent className="w-full">
                   <AnnotationHeader>
-                    <AnnotationAuthorName role={annotation.author.role} />
-                    <span className="text-gray-400">•</span>
-                    <span>{formatTimestamp(annotation.timestamp)}</span>
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-2">
+                        <AnnotationAuthorName role={annotation.author.role} />
+                        <span className="text-gray-400">•</span>
+                        <span>{formatTimestamp(annotation.timestamp)}</span>
+                      </div>
+                      <DeleteMenu onDelete={() => deleteAnnotation(annotation.id)} />
+                    </div>
                   </AnnotationHeader>
                   {annotation.aiAnnotation ? (
                     <>
@@ -165,10 +194,20 @@ function AnnotationsTab() {
                         <div key={reply.id} className="flex items-start gap-2">
                           <span className="w-6 h-6 flex items-center justify-center rounded-full bg-gray-100 text-xs flex-shrink-0">{reply.author.avatar || "💬"}</span>
                           <div className="flex-1 min-w-0 overflow-hidden">
-                            <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
-                              <span>{reply.author.name}</span>
-                              <span className="text-gray-400">•</span>
-                              <span>{formatTimestamp(reply.timestamp)}</span>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+                                <span>{reply.author.name}</span>
+                                <span className="text-gray-400">•</span>
+                                <span>{formatTimestamp(reply.timestamp)}</span>
+                              </div>
+                              <DeleteMenu onDelete={() => {
+                                setAnnotations(prev => prev.map(a => 
+                                  a.id === annotation.id ? {
+                                    ...a,
+                                    replies: a.replies?.filter(r => r.id !== reply.id)
+                                  } : a
+                                ))
+                              }} />
                             </div>
                             {reply.isEditing ? (
                               <div className="mt-1">
