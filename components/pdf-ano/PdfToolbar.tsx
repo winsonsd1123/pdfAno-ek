@@ -215,4 +215,4 @@ export function PdfToolbar({ docName, onToggleDebugPanel, showDebugPanel }: PdfT
       </div>
     </div>
   )
-} 
+}

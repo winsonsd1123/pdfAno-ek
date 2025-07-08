@@ -179,11 +179,11 @@
 - **performAutoAnnotation函数**：~50行 → 简化为服务调用
 
 #### 🏗️ 新创建的模块架构
-```
+\`\`\`
 lib/ai-annotation-parser.ts     (~150行) - 解析AI响应的纯函数
 lib/ai-annotation-api.ts        (~120行) - API调用封装
 lib/ai-annotation-service.ts    (~420行) - 完整的AI批注业务逻辑
-```
+\`\`\`
 
 ### ✅ 第二阶段完成状态
 - **AI批注类型定义**：100% ✅
@@ -223,4 +223,4 @@ lib/ai-annotation-service.ts    (~420行) - 完整的AI批注业务逻辑
 *重构方式：渐进式模块化，保持功能完整性*  
 *重构效果：代码质量显著提升，架构清晰可维护* 
 
-**🏆 PDF工具模块化重构项目圆满完成！** 
+**🏆 PDF工具模块化重构项目圆满完成！**

@@ -434,4 +434,4 @@ export async function searchPDFText(
   const searchOptions: SearchOptions = { query, ...options }
   const results = await extractor.searchText(searchOptions)
   return Array.isArray(results) ? results : []
-} 
+}

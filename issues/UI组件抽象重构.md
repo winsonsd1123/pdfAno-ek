@@ -49,4 +49,4 @@
     1.  将 `panelWidth` 状态提升至 `PdfAnoContext`，由父组件动态设置主内容区的 `marginRight`。
     2.  在 `SidePanel.tsx` 的 `AnnotationsTab` 组件中，重新添加了回复列表和回复表单的JSX及处理逻辑。
     3.  调整了 `PdfAnoContext` 和 `PdfViewer` 中的 `useEffect` 逻辑，将渲染器配置和懒加载启动移至 `PdfViewer` 挂载后执行，并主动渲染第一页，确保刷新后内容正常显示。
-*   **状态:** 所有已知问题均已修复。 
+*   **状态:** 所有已知问题均已修复。

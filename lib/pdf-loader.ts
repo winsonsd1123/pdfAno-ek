@@ -267,4 +267,4 @@ export async function ensurePDFJSReady(): Promise<boolean> {
 export function getPDFJSVersion(): string {
   const loader = PDFLoader.getInstance()
   return loader.getVersion()
-} 
+}

@@ -89,4 +89,4 @@ export interface DebugInfo {
   fallbackCoordinates?: { x: number; y: number }
   actualPage?: number
   searchStrategy?: string
-} 
+}

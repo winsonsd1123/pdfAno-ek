@@ -75,4 +75,4 @@ export function AnnotationAuthorName({
       {displayNames[role]}
     </span>
   )
-} 
+}

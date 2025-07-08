@@ -258,4 +258,4 @@ export interface AIAnnotationLocationResult {
   coordinates: CoordinateInfo | null
   strategy: string
   success: boolean
-} 
+}

@@ -19,4 +19,4 @@ export function QuotedText({ text, className }: QuotedTextProps) {
       </div>
     </div>
   )
-} 
+}

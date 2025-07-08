@@ -379,4 +379,4 @@ export function SidePanel({ showDebugPanel }: { showDebugPanel: boolean }) {
       </div>
     </>
   )
-} 
+}
