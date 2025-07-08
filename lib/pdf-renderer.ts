@@ -481,4 +481,4 @@ export class ScaleController {
   canZoomOut(): boolean {
     return this.currentScale > this.minScale
   }
-} 
+}

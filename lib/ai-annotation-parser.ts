@@ -187,4 +187,4 @@ export function getParseStatistics(originalResponse: string, parsedAnnotations: 
       ? Math.round(parsedAnnotations.reduce((sum, ann) => sum + ann.description.length, 0) / parsedAnnotations.length)
       : 0
   }
-} 
+}
