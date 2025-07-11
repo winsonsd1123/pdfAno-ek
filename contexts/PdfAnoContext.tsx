@@ -23,7 +23,8 @@ import { loadPDFDocument } from "@/lib/pdf-loader"
 import { createPDFRenderer, ScaleController, type PDFRenderer } from "@/lib/pdf-renderer"
 import { createTextExtractor, type PDFTextExtractor } from "@/lib/pdf-text-extractor"
 import { createAIAnnotationService, type AIAnnotationService } from "@/lib/ai-annotation-service"
-import { addDefaultAuthorInfo, getCurrentTimestamp } from "@/lib/annotation-utils"
+import { createAnnotationRoles, addDefaultAuthorInfo, getCurrentTimestamp } from "@/lib/annotation-utils"
+import { useAuth } from "@/contexts/AuthContext"
 
 // 定义Context的状态接口
 interface PdfAnoContextState {
@@ -91,6 +92,7 @@ interface PdfAnoProviderProps {
 
 // 创建Provider组件
 export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
+  const { profile } = useAuth()
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)  // 新增：当前页码状态
@@ -334,8 +336,13 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
         }
       }
 
-      // 创建新的批注对象
-      const authorInfo = addDefaultAuthorInfo("手动批注者")
+      // 创建新的批注对象 - 直接创建用户作者信息，不依赖profile
+      const authorInfo = {
+        name: profile?.full_name || profile?.username || "匿名用户",
+        role: profile?.role?.name || "普通用户", 
+        avatar: profile?.avatar_url || "👤",
+        color: "green"
+      }
       const newAnnotation: Annotation = {
         id: `manual-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         type: "highlight",
@@ -367,7 +374,7 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
     } catch (err) {
       console.error("Add manual annotation failed:", err)
     }
-  }, [pdfDoc, extractTextFromRect])
+  }, [pdfDoc, extractTextFromRect, profile])
 
   const goToSearchResult = useCallback((index: number) => {
     if (index < 0 || index >= searchResults.length) return

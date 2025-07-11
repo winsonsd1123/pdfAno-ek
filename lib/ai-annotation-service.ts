@@ -14,6 +14,7 @@ import { parseAIAnnotationResponse, getParseStatistics } from './ai-annotation-p
 import { callDeepSeekAPI, validateAPIConfig } from './ai-annotation-api'
 import { 
   mergeAnnotationContent, 
+  createAnnotationRoles,
   addDefaultAuthorInfo, 
   getCurrentTimestamp
 } from './annotation-utils'
@@ -351,7 +352,12 @@ export class AIAnnotationService {
         height: location ? location.height : 20,
         content: annotation.title,
         type: "highlight",
-        author: addDefaultAuthorInfo("AI助手"),
+        author: {
+          name: "AI教授",
+          role: "AI助手",
+          avatar: "🤖",
+          color: "blue"
+        },
         timestamp: getCurrentTimestamp(),
         isExpanded: false,
         aiAnnotation: {

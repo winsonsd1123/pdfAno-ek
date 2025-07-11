@@ -12,7 +12,8 @@ import { AnnotationIcon, AnnotationAuthorName } from "@/components/ui/annotation
 import { QuotedText } from "@/components/ui/quoted-text"
 import { Search, MessageSquare, MapPin, MoreVertical, Trash2 } from "lucide-react"
 import { usePdfAnoContext } from '@/contexts/PdfAnoContext'
-import { addDefaultAuthorInfo, getCurrentTimestamp, formatTimestamp } from '@/lib/annotation-utils'
+import { createAnnotationRoles, addDefaultAuthorInfo, getCurrentTimestamp, formatTimestamp } from '@/lib/annotation-utils'
+import { useAuth } from '@/contexts/AuthContext'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -125,6 +126,7 @@ function AnnotationsTab() {
     toggleReplyEditMode,
     deleteAnnotation,
   } = usePdfAnoContext()
+  const { profile } = useAuth()
 
   return (
     <Card className="flex-1 flex flex-col">
@@ -141,13 +143,13 @@ function AnnotationsTab() {
             >
               <div className="flex w-full gap-2">
                 <div ref={(el) => { if (el) { annotationItemRefs.current.set(annotation.id, el) } else { annotationItemRefs.current.delete(annotation.id) } }} className="flex-shrink-0">
-                  <AnnotationIcon role={annotation.author.role} type={annotation.type} />
+                  <AnnotationIcon author={annotation.author} type={annotation.type} />
                 </div>
                 <AnnotationContent className="w-full">
                   <AnnotationHeader>
                     <div className="flex items-center justify-between w-full">
                       <div className="flex items-center gap-2">
-                        <AnnotationAuthorName role={annotation.author.role} />
+                        <AnnotationAuthorName author={annotation.author} />
                         <span className="text-gray-400">•</span>
                         <span>{formatTimestamp(annotation.timestamp)}</span>
                       </div>
@@ -247,7 +249,12 @@ function AnnotationsTab() {
                               ...(a.replies || []),
                               {
                                 id: Date.now().toString(),
-                                author: addDefaultAuthorInfo("手动批注者"),
+                                author: {
+                                  name: profile?.full_name || profile?.username || "匿名用户",
+                                  role: profile?.role?.name || "普通用户",
+                                  avatar: profile?.avatar_url || "👤", 
+                                  color: "green"
+                                },
                                 content: value,
                                 timestamp: getCurrentTimestamp(),
                               }
@@ -306,6 +313,7 @@ function DebugPanel() {
 // Main SidePanel Component
 export function SidePanel({ showDebugPanel }: { showDebugPanel: boolean }) {
   const { annotations, searchText, panelWidth, setPanelWidth } = usePdfAnoContext()
+  const { profile } = useAuth()
   const [activeTab, setActiveTab] = useState("annotations")
   const [isResizing, setIsResizing] = useState(false)
   const [showCoordinates, setShowCoordinates] = useState(false)

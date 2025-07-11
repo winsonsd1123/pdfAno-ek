@@ -1,11 +1,14 @@
-export type AnnotationRole = "AI助手" | "手动批注者" | "导师" | "同学"
+export type AnnotationRole = "AI助手" | "当前用户"
 
 export interface AuthorInfo {
   name: string
-  role: AnnotationRole
+  role: string
   avatar?: string
   color: string
 }
+
+// 引入用户类型
+import type { UserWithRole } from '@/types/supabase'
 
 export interface OriginalAIAnnotation {
   selectedText: string
@@ -16,31 +19,21 @@ export interface OriginalAIAnnotation {
   severity: string
 }
 
-// 角色配置
-export const ANNOTATION_ROLES: Record<AnnotationRole, AuthorInfo> = {
-  "AI助手": {
-    name: "AI教授",
-    role: "AI助手",
-    avatar: "🤖",
-    color: "blue"
-  },
-  "手动批注者": {
-    name: "我",
-    role: "手动批注者", 
-    avatar: "👤",
-    color: "green"
-  },
-  "导师": {
-    name: "导师",
-    role: "导师",
-    avatar: "👨‍🏫",
-    color: "yellow"
-  },
-  "同学": {
-    name: "同学", 
-    role: "同学",
-    avatar: "👥",
-    color: "purple"
+// 动态角色配置函数
+export function createAnnotationRoles(currentUser: UserWithRole | null): Record<AnnotationRole, AuthorInfo> {
+  return {
+    "AI助手": {
+      name: "AI教授",
+      role: "AI助手",
+      avatar: "🤖",
+      color: "blue"
+    },
+    "当前用户": {
+      name: currentUser?.full_name || currentUser?.username || "匿名用户",
+      role: currentUser?.role?.name || "普通用户",
+      avatar: currentUser?.avatar_url || "👤",
+      color: "green"
+    }
   }
 }
 
@@ -83,9 +76,12 @@ export function getCurrentTimestamp(): string {
   return new Date().toISOString()
 }
 
-// 为现有批注添加默认author信息
-export function addDefaultAuthorInfo(role: AnnotationRole = "手动批注者"): AuthorInfo {
-  return ANNOTATION_ROLES[role]
+// 为现有批注添加默认author信息 - 需要传入用户信息
+export function addDefaultAuthorInfo(
+  annotationRoles: Record<AnnotationRole, AuthorInfo>, 
+  role: AnnotationRole = "当前用户"
+): AuthorInfo {
+  return annotationRoles[role]
 }
 
 // 截断文本用于预览

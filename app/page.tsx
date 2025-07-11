@@ -2,20 +2,58 @@
 
 import Link from "next/link"
 import { useState, useRef, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
+import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Upload, FileText, Bot, CheckCircle, XCircle, Loader2, Eye, Edit3 } from "lucide-react"
-import { DocumentStorage } from "@/lib/document-storage"
-import { DocumentMetadata, UploadResponse } from "@/types/document"
+import { Upload, FileText, Bot, CheckCircle, XCircle, Loader2, Eye, Edit3, Trash2 } from "lucide-react"
+// import { DocumentStorage } from "@/lib/document-storage" // 1. 干掉野路子 localStorage 存储
+// import { DocumentMetadata, UploadResponse } from "@/types/document" // 2. 移除旧的类型定义
 import { useRouter } from "next/navigation"
+import { useAuth } from "@/contexts/AuthContext"
+import { UserAvatarMenu } from "@/components/ui/user-avatar-menu"
+
+// 定义一个临时的文章类型，理想情况下应该从 Supabase types 导入
+type Article = {
+  id: string;
+  name: string;
+  url: string;
+  status: string;
+  uploader_id: string;
+  reviewer_id: string | null;
+  uploaded_at: string;
+}
 
 export default function Home() {
-  const [uploadedDocuments, setUploadedDocuments] = useState<DocumentMetadata[]>([])
+  const [uploadedDocuments, setUploadedDocuments] = useState<Article[]>([]) // 3. 使用新的类型
   const [isUploading, setIsUploading] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<string>("")
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
+  const { isAdmin, isAuthenticated, loading } = useAuth()
+  const searchParams = useSearchParams()
+  const { toast } = useToast()
+
+  useEffect(() => {
+    const error = searchParams.get('error');
+    if (error) {
+      // 使用微小的延迟来确保Toaster组件已准备好接收事件
+      setTimeout(() => {
+        let description = "发生未知错误";
+        if (error === 'access_denied') {
+          description = "您没有权限访问所请求的页面。";
+        } else if (error === 'permission_check_failed') {
+          description = "无法验证您的权限，请稍后重试。";
+        }
+        toast({
+          title: "访问受限",
+          description: description,
+          variant: "destructive",
+        });
+      }, 100)
+    }
+  }, [searchParams, toast]);
 
   // 不需要useEffect，直接用空数组初始化，纯内存状态
 
@@ -34,16 +72,16 @@ export default function Home() {
         body: formData,
       })
 
-      const result: UploadResponse = await response.json()
-
-      if (result.success && result.document) {
-        // 添加到永久存储（工作台用）
-        DocumentStorage.addDocument(result.document)
-        // 直接更新React状态（首页用，纯内存状态）
-        setUploadedDocuments(prev => [result.document!, ...prev])
+      // 4. 更新 API 响应处理逻辑
+      if (response.ok) {
+        const newArticle: Article = await response.json()
+        // 不再需要添加到 DocumentStorage
+        // DocumentStorage.addDocument(result.document)
+        setUploadedDocuments(prev => [newArticle, ...prev])
         setUploadStatus("上传成功！")
       } else {
-        setUploadStatus(`上传失败: ${result.error}`)
+        const result = await response.json()
+        setUploadStatus(`上传失败: ${result.error || '未知错误'}`)
       }
     } catch (error) {
       console.error('Upload error:', error)
@@ -53,6 +91,26 @@ export default function Home() {
       setTimeout(() => setUploadStatus(""), 5000)
     }
   }
+
+  const handleDelete = async (docId: string) => {
+    // 从UI上立即移除，提供更好的用户体验
+    setUploadedDocuments(docs => docs.filter(d => d.id !== docId));
+
+    try {
+      const response = await fetch(`/api/documents/${docId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        // 如果删除失败，把项目加回来，并提示用户
+        alert("删除失败，请稍后重试。");
+        // 这里可以实现更复杂的回滚逻辑，但对于MVP，alert就够了
+        // 理想情况下，我们需要重新获取一次列表来同步状态
+      }
+    } catch (error) {
+      alert("删除时发生网络错误。");
+    }
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -118,7 +176,7 @@ export default function Home() {
               <FileText className="h-6 w-6 text-gray-700" />
               <h1 className="text-xl font-semibold text-gray-900">PDF Analyzer</h1>
             </div>
-            <div className="flex space-x-8">
+            <div className="flex items-center space-x-8">
               <Link href="/" className="text-gray-600 hover:text-gray-900 transition-colors">
                 首页
               </Link>
@@ -134,6 +192,7 @@ export default function Home() {
               <Link href="#help" className="text-gray-600 hover:text-gray-900 transition-colors">
                 帮助
               </Link>
+              <UserAvatarMenu />
             </div>
           </div>
         </div>
@@ -236,34 +295,18 @@ export default function Home() {
                         <div>
                           <p className="font-medium text-gray-900">{doc.name}</p>
                           <p className="text-sm text-gray-500">
-                            {formatFileSize(doc.size)} • {formatDate(doc.uploadTime)}
+                            上传于: {formatDate(doc.uploaded_at)}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="destructive"
                           size="sm"
-                          onClick={() => window.open(doc.url, '_blank')}
+                          onClick={() => handleDelete(doc.id)}
                         >
-                          <Eye className="h-4 w-4 mr-1" />
-                          查看
-                        </Button>
-                        <Button 
-                          variant="default" 
-                          size="sm" 
-                          className="bg-black hover:bg-gray-800"
-                          onClick={() => {
-                            const params = new URLSearchParams({
-                              docId: doc.id,
-                              url: doc.url,
-                              name: doc.name
-                            })
-                            router.push(`/pdfano?${params.toString()}`)
-                          }}
-                        >
-                          <Edit3 className="h-4 w-4 mr-1" />
-                          批注
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          删除
                         </Button>
                       </div>
                     </div>

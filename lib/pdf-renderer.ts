@@ -65,65 +65,69 @@ export class PDFRenderer {
    * @param pageNumber 页面号（1-based）
    * @returns Promise that resolves when rendering is complete
    */
-  async renderPage(pageNumber: number): Promise<void> {
-    if (this.renderedPages.has(pageNumber) || this.renderQueue.has(pageNumber)) {
-      return
+  async renderPage(pageNumber: number, force: boolean = false): Promise<void> {
+    if (!force && this.renderedPages.has(pageNumber)) {
+      return;
+    }
+    
+    if (this.renderTasks.has(pageNumber)) {
+      this.renderTasks.get(pageNumber)!.cancel();
+    }
+    
+    if (this.renderQueue.has(pageNumber)) {
+        return;
     }
 
-    this.renderQueue.add(pageNumber)
-    let page: PDFPageProxy | null = null
+    this.renderQueue.add(pageNumber);
+    let page: PDFPageProxy | null = null;
+    let renderTask: PDFRenderTask | null = null;
 
     try {
-      const existingTask = this.renderTasks.get(pageNumber)
-      if (existingTask) {
-        await existingTask.cancel()
-        this.renderTasks.delete(pageNumber)
-      }
+      page = await this.pdfDoc.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: this.scale });
 
-      page = await this.pdfDoc.getPage(pageNumber)
-      const viewport = page.getViewport({ scale: this.scale })
-
-      const canvas = this.pageRefs.get(pageNumber)
+      const canvas = this.pageRefs.get(pageNumber);
       if (!canvas) {
-        console.warn(`Canvas not found for page ${pageNumber}`)
-        return
+        console.warn(`Canvas not found for page ${pageNumber}`);
+        return;
       }
 
-      const context = canvas.getContext("2d")
+      const context = canvas.getContext("2d");
       if (!context) {
-        console.error(`Cannot get 2D context for page ${pageNumber}`)
-        return
+        console.error(`Cannot get 2D context for page ${pageNumber}`);
+        return;
       }
 
-      canvas.height = viewport.height
-      canvas.width = viewport.width
-      context.clearRect(0, 0, canvas.width, canvas.height)
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      context.clearRect(0, 0, canvas.width, canvas.height);
 
-      const renderTask = page.render({
+      renderTask = page.render({
         canvasContext: context,
         viewport: viewport,
-      })
+      });
 
-      this.renderTasks.set(pageNumber, renderTask)
+      this.renderTasks.set(pageNumber, renderTask);
 
-      await renderTask.promise
+      await renderTask.promise;
 
-      this.renderedPages.add(pageNumber)
-      this.renderTasks.delete(pageNumber)
+      this.renderedPages.add(pageNumber);
       
-      console.log(`Page ${pageNumber} rendered successfully`)
+      console.log(`Page ${pageNumber} rendered successfully`);
 
     } catch (err: any) {
       if (err.name === "RenderingCancelledException") {
-        console.log(`Rendering cancelled for page ${pageNumber}`)
+        console.log(`Rendering cancelled for page ${pageNumber}`);
       } else {
-        console.error(`Error rendering page ${pageNumber}:`, err)
+        console.error(`Error rendering page ${pageNumber}:`, err);
       }
-      this.renderTasks.delete(pageNumber)
     } finally {
-      this.renderQueue.delete(pageNumber)
+      this.renderQueue.delete(pageNumber);
+      if (renderTask && this.renderTasks.get(pageNumber) === renderTask) {
+        this.renderTasks.delete(pageNumber);
+      }
       if (page) {
-        page.cleanup()
+        page.cleanup();
       }
     }
   }

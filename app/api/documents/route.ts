@@ -1,40 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { list } from '@vercel/blob'
+import { createSupabaseServerClient } from '@/lib/supabase-server'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const supabase = await createSupabaseServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   try {
-    // 从 Vercel Blob Storage 获取所有 blob 文件
-    const { blobs } = await list()
-    
-    // 过滤出 PDF 文件并转换为我们的文档格式
-    const documents = blobs
-      .filter(blob => blob.pathname.toLowerCase().endsWith('.pdf'))
-      .map(blob => {
-        const fileName = blob.pathname.split('/').pop() || ''
-        const fileNameWithoutExt = fileName.replace(/\.pdf$/i, '')
-        return {
-          id: `${blob.uploadedAt}_${fileNameWithoutExt}`.replace(/[^a-zA-Z0-9_-]/g, '_'),
-          name: decodeURIComponent(fileName),
-          url: blob.url,
-          size: blob.size,
-          uploadTime: blob.uploadedAt,
-          blobPath: blob.pathname
-        }
-      })
-      .sort((a, b) => new Date(b.uploadTime).getTime() - new Date(a.uploadTime).getTime()) // 按上传时间倒序
+    // 查询当前用户作为上传者或审阅者的所有论文
+    // 这取代了之前需要在数据库层面配置的 RLS 策略，将权限控制放在了应用层
+    const { data: articles, error } = await supabase
+      .from('articles')
+      .select('*, uploader:profiles!articles_uploader_id_fkey(full_name), reviewer:profiles!articles_reviewer_id_fkey(full_name)')
+      .or(`uploader_id.eq.${user.id},reviewer_id.eq.${user.id}`)
+      .order('uploaded_at', { ascending: false })
 
-    return NextResponse.json({
-      success: true,
-      documents
-    })
+    if (error) {
+      console.error('Error fetching articles:', error)
+      return NextResponse.json({ error: 'Failed to fetch articles.' }, { status: 500 })
+    }
+
+    return NextResponse.json(articles)
+
   } catch (error) {
-    console.error('Error fetching documents from blob storage:', error)
-    return NextResponse.json(
-      { 
-        success: false, 
-        error: '获取文档列表失败' 
-      },
-      { status: 500 }
-    )
+    console.error('Unexpected error fetching articles:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    return NextResponse.json({ error: `An unexpected error occurred: ${errorMessage}` }, { status: 500 })
   }
 }

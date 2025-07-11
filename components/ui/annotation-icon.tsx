@@ -1,44 +1,54 @@
 import React from "react"
 import { cn } from "@/lib/utils"
 
-type AnnotationRole = "AI助手" | "手动批注者" | "导师" | "同学"
 type AnnotationType = "highlight" | "note"
 
+interface AuthorInfo {
+  name: string
+  role: string
+  avatar?: string
+  color: string
+}
+
 interface AnnotationIconProps {
-  role: AnnotationRole
+  author: AuthorInfo
   type: AnnotationType
   className?: string
 }
 
-const ROLE_CONFIG = {
-  "AI助手": {
-    icon: "🤖",
-    bgColor: "bg-blue-100",
-    textColor: "text-blue-700",
-    borderColor: "border-blue-200"
-  },
-  "手动批注者": {
-    icon: "👤",
-    bgColor: "bg-green-100", 
-    textColor: "text-green-700",
-    borderColor: "border-green-200"
-  },
-  "导师": {
-    icon: "👨‍🏫",
-    bgColor: "bg-yellow-100",
-    textColor: "text-yellow-700", 
-    borderColor: "border-yellow-200"
-  },
-  "同学": {
-    icon: "👥",
-    bgColor: "bg-purple-100",
-    textColor: "text-purple-700",
-    borderColor: "border-purple-200"
+// 根据角色获取配置
+function getRoleConfig(author: AuthorInfo) {
+  // AI助手的特殊处理
+  if (author.role === "AI助手") {
+    return {
+      icon: author.avatar || "🤖",
+      bgColor: "bg-blue-100",
+      textColor: "text-blue-700",
+      borderColor: "border-blue-200"
+    }
+  }
+  
+  // 用户角色的处理
+  if (author.color === "green") {
+    return {
+      icon: author.avatar || "👤",
+      bgColor: "bg-green-100",
+      textColor: "text-green-700",
+      borderColor: "border-green-200"
+    }
+  }
+  
+  // 默认配置
+  return {
+    icon: author.avatar || "👤",
+    bgColor: "bg-gray-100",
+    textColor: "text-gray-700",
+    borderColor: "border-gray-200"
   }
 }
 
-export function AnnotationIcon({ role, type, className }: AnnotationIconProps) {
-  const config = ROLE_CONFIG[role]
+export function AnnotationIcon({ author, type, className }: AnnotationIconProps) {
+  const config = getRoleConfig(author)
   
   return (
     <div
@@ -49,30 +59,32 @@ export function AnnotationIcon({ role, type, className }: AnnotationIconProps) {
         config.borderColor,
         className
       )}
-      title={`${role} - ${type}`}
+      title={`${author.name} (${author.role}) - ${type}`}
     >
-      {config.icon}
+      {/* 如果是图片URL，显示图片；否则显示emoji或首字母 */}
+      {config.icon.startsWith('http') ? (
+        <img 
+          src={config.icon} 
+          alt={author.name} 
+          className="w-4 h-4 rounded-full object-cover"
+        />
+      ) : (
+        config.icon
+      )}
     </div>
   )
 }
 
 export function AnnotationAuthorName({ 
-  role, 
+  author, 
   className 
 }: { 
-  role: AnnotationRole
+  author: AuthorInfo
   className?: string 
 }) {
-  const displayNames = {
-    "AI助手": "AI教授",
-    "手动批注者": "我",
-    "导师": "导师",
-    "同学": "同学"
-  }
-  
   return (
     <span className={cn("font-medium text-xs", className)}>
-      {displayNames[role]}
+      {author.name}
     </span>
   )
 }

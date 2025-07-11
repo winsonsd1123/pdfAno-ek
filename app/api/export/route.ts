@@ -10,7 +10,7 @@ export interface AnnotationReply {
   id: string
   author: {
     name: string
-    role: "AI助手" | "手动批注者" | "导师" | "同学"
+    role: string
     avatar?: string
     color: string
   }
@@ -28,7 +28,7 @@ interface FrontendAnnotation {
   type: "highlight" | "note";
   author: {
     name: string;
-    role: "AI助手" | "手动批注者" | "导师" | "同学";
+    role: string;
   };
   timestamp: string;
   coordinates: {

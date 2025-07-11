@@ -3,9 +3,10 @@
 import React, { useState } from 'react'
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { FileText, MessageSquare, ZoomIn, ZoomOut, MapPin, Pencil, Download } from "lucide-react"
+import { FileText, MessageSquare, ZoomIn, ZoomOut, MapPin, Pencil, Download, LayoutDashboard } from "lucide-react"
 import { usePdfAnoContext } from "@/contexts/PdfAnoContext"
 import { toast } from "sonner"
+import { useRouter } from "next/navigation"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,6 +18,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 interface PdfToolbarProps {
   docName: string
@@ -25,6 +32,7 @@ interface PdfToolbarProps {
 }
 
 export function PdfToolbar({ docName, onToggleDebugPanel, showDebugPanel }: PdfToolbarProps) {
+  const router = useRouter()
   const {
     numPages,
     currentPage,
@@ -114,6 +122,23 @@ export function PdfToolbar({ docName, onToggleDebugPanel, showDebugPanel }: PdfT
   return (
     <div className="bg-white border-b border-gray-200 p-4 flex items-center justify-between">
       <div className="flex items-center gap-4">
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                onClick={() => router.push('/works')}
+                size="sm"
+                variant="outline"
+                className="hover:scale-105 transition-all hover:bg-blue-100 hover:text-blue-700 hover:border-blue-200"
+              >
+                <LayoutDashboard className="w-4 h-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>返回工作台</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         <div className="flex items-center gap-2">
           <FileText className="h-5 w-5 text-gray-700" />
           <span className="font-medium text-gray-900" title={docName}>
