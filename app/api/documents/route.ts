@@ -1,21 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase-server'
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"
+import { createSupabaseAdminClient } from "@/lib/supabase"
 
 export async function GET(request: NextRequest) {
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const session = await getServerSession(authOptions)
 
-  if (!user) {
+  if (!session || !session.user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  
+  const userId = (session.user as any).id;
 
   try {
-    // 查询当前用户作为上传者或审阅者的所有论文
-    // 这取代了之前需要在数据库层面配置的 RLS 策略，将权限控制放在了应用层
-    const { data: articles, error } = await supabase
+    const supabaseAdmin = createSupabaseAdminClient()
+    
+    const { data: articles, error } = await supabaseAdmin
       .from('articles')
       .select('*, uploader:profiles!articles_uploader_id_fkey(full_name), reviewer:profiles!articles_reviewer_id_fkey(full_name)')
-      .or(`uploader_id.eq.${user.id},reviewer_id.eq.${user.id}`)
+      .or(`uploader_id.eq.${userId},reviewer_id.eq.${userId}`)
       .order('uploaded_at', { ascending: false })
 
     if (error) {

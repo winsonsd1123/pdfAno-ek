@@ -48,6 +48,7 @@ export function PdfToolbar({ docName, onToggleDebugPanel, showDebugPanel }: PdfT
     toggleManualAnnotationMode,
     annotations, // 获取批注数据
     docUrl,      // 获取文档URL
+    articleId, // 新增：获取articleId
   } = usePdfAnoContext()
 
   const [isExporting, setIsExporting] = useState(false)
@@ -71,6 +72,13 @@ export function PdfToolbar({ docName, onToggleDebugPanel, showDebugPanel }: PdfT
           : anno.content
       }))
 
+      // 添加调试日志
+      console.log('Export request data:', {
+        filename: docUrl,
+        annotations: processedAnnotations,
+        articleId,
+      });
+
       const response = await fetch('/api/export', {
         method: 'POST',
         headers: {
@@ -79,11 +87,13 @@ export function PdfToolbar({ docName, onToggleDebugPanel, showDebugPanel }: PdfT
         body: JSON.stringify({
           filename: docUrl,
           annotations: processedAnnotations,
+          articleId,
         }),
       })
 
       if (!response.ok) {
         const errorData = await response.json()
+        console.error('Export error response:', errorData);  // 添加错误响应日志
         throw new Error(errorData.error || '导出失败')
       }
 

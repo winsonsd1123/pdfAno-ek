@@ -92,7 +92,8 @@ export default function WorksPage() {
   const handleAnnotate = (document: Article) => {
     const params = new URLSearchParams({
       url: document.url,
-      name: document.name, // 把文件名也加上
+      name: document.name,
+      articleId: document.id, // 添加文章ID
     })
     router.push(`/pdfano?${params.toString()}`)
   }
@@ -282,11 +283,14 @@ export default function WorksPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() =>
-                              router.push(
-                                `/pdfano?url=${encodeURIComponent(doc.url)}`,
-                              )
-                            }
+                            onClick={() => {
+                              const params = new URLSearchParams({
+                                url: doc.url,
+                                name: doc.name,
+                                articleId: doc.id,
+                              })
+                              router.push(`/pdfano?${params.toString()}`)
+                            }}
                           >
                             <Eye className="h-4 w-4 mr-1" />
                             查看

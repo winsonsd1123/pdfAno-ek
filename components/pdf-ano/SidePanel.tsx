@@ -13,7 +13,7 @@ import { QuotedText } from "@/components/ui/quoted-text"
 import { Search, MessageSquare, MapPin, MoreVertical, Trash2 } from "lucide-react"
 import { usePdfAnoContext } from '@/contexts/PdfAnoContext'
 import { createAnnotationRoles, addDefaultAuthorInfo, getCurrentTimestamp, formatTimestamp } from '@/lib/annotation-utils'
-import { useAuth } from '@/contexts/AuthContext'
+import { useSession } from 'next-auth/react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -126,7 +126,8 @@ function AnnotationsTab() {
     toggleReplyEditMode,
     deleteAnnotation,
   } = usePdfAnoContext()
-  const { profile } = useAuth()
+  const { data: session } = useSession()
+  const profile = session?.user
 
   return (
     <Card className="flex-1 flex flex-col">
@@ -313,7 +314,8 @@ function DebugPanel() {
 // Main SidePanel Component
 export function SidePanel({ showDebugPanel }: { showDebugPanel: boolean }) {
   const { annotations, searchText, panelWidth, setPanelWidth } = usePdfAnoContext()
-  const { profile } = useAuth()
+  const { data: session } = useSession()
+  const profile = session?.user
   const [activeTab, setActiveTab] = useState("annotations")
   const [isResizing, setIsResizing] = useState(false)
   const [showCoordinates, setShowCoordinates] = useState(false)

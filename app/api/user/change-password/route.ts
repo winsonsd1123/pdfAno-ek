@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase-server'
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"
+import { createSupabaseAdminClient } from "@/lib/supabase"
 
 interface ChangePasswordRequest {
   currentPassword: string
@@ -8,22 +10,19 @@ interface ChangePasswordRequest {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createSupabaseServerClient()
+    const session = await getServerSession(authOptions)
     
-    // 获取当前用户
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
+    if (!session?.user?.email || !(session.user as any).id) {
       return NextResponse.json(
         { error: '未授权访问' },
         { status: 401 }
       )
     }
+    const userId = (session.user as any).id
+    const userEmail = session.user.email
 
-    // 解析请求体
     const { currentPassword, newPassword }: ChangePasswordRequest = await request.json()
     
-    // 验证输入
     if (!currentPassword || !newPassword) {
       return NextResponse.json(
         { error: '当前密码和新密码都不能为空' },
@@ -45,23 +44,26 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 首先验证当前密码
-    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-      email: user.email!,
+    const supabaseAdmin = createSupabaseAdminClient()
+
+    // Step 1: Verify the current password by trying to sign in.
+    const { error: signInError } = await supabaseAdmin.auth.signInWithPassword({
+      email: userEmail,
       password: currentPassword
     })
 
-    if (signInError || !signInData.user) {
+    if (signInError) {
       return NextResponse.json(
         { error: '当前密码不正确' },
         { status: 400 }
       )
     }
 
-    // 更新密码
-    const { error: updateError } = await supabase.auth.updateUser({
-      password: newPassword
-    })
+    // Step 2: Update the password for the user using their ID.
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+      userId,
+      { password: newPassword }
+    )
 
     if (updateError) {
       console.error('Password update error:', updateError)
@@ -71,11 +73,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 更新用户资料的更新时间
-    await supabase
+    // Step 3: Update the 'updated_at' timestamp in the user's profile.
+    await supabaseAdmin
       .from('profiles')
       .update({ updated_at: new Date().toISOString() })
-      .eq('id', user.id)
+      .eq('id', userId)
 
     return NextResponse.json({
       success: true,

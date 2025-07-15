@@ -15,7 +15,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { useAuth } from '@/contexts/AuthContext';
+// import { useAuth } from '@/contexts/AuthContext'; // This is removed
+import { signIn, useSession } from 'next-auth/react'; // This is added
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,19 +31,20 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   
-  const { signIn, isAuthenticated } = useAuth();
+  // const { signIn, isAuthenticated } = useAuth(); // Replaced with useSession
+  const { data: session, status } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
   
   const redirectTo = searchParams.get('redirect') || '/pdfano';
 
-  // 如果已登录，重定向
+  // If user is already authenticated, redirect them.
   useEffect(() => {
-    if (isAuthenticated()) {
+    if (status === 'authenticated') {
       router.push(redirectTo);
     }
-  }, [isAuthenticated, router, redirectTo]);
+  }, [status, router, redirectTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,19 +57,26 @@ export default function LoginPage() {
       return;
     }
 
-    const result = await signIn(email, password);
+    const result = await signIn('credentials', {
+      redirect: false,
+      email,
+      password,
+    });
     
-    if (result.error) {
-      setError(result.error);
+    if (result?.error) {
+      const errorMessage = result.error === 'CredentialsSignin' 
+        ? '邮箱或密码错误，请重试。' 
+        : '登录时发生未知错误。';
+      setError(errorMessage);
       toast({
         variant: "destructive",
         title: "登录失败",
-        description: result.error,
+        description: errorMessage,
       });
-    } else {
+    } else if (result?.ok) {
       toast({
         title: "登录成功",
-        description: "欢迎回来！",
+        description: "欢迎回来！正在跳转...",
       });
       router.push(redirectTo);
     }

@@ -1,17 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdminClient } from '@/lib/supabase';
-import { getServerUser } from '@/lib/supabase-server';
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await getServerUser();
-    
-    if (!user) {
-      return NextResponse.json({
-        success: false,
-        error: 'Not authenticated'
-      }, { status: 401 });
+    const session = await getServerSession(authOptions)
+    if (!session?.user?.email || !(session.user as any).id) {
+      return NextResponse.json(
+        { success: false, error: 'Not authenticated' },
+        { status: 401 }
+      )
     }
+    
+    // Construct a user object similar to the old one for minimal code change below.
+    const user = {
+      id: (session.user as any).id,
+      email: session.user.email,
+    };
 
     const adminClient = createSupabaseAdminClient();
 

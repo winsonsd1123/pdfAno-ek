@@ -15,7 +15,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
+import { useSession, signOut } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
@@ -61,10 +61,14 @@ export default function AdminLayout({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
-  const { profile, signOut, isAdmin } = useAuth();
+  const { data: session, status } = useSession();
+
+  // 从 NextAuth session 中获取用户状态
+  const profile = session?.user;
+  const isAdmin = session?.user?.role === 'admin';
 
   // 如果不是管理员，显示无权限页面
-  if (!isAdmin()) {
+  if (status === 'authenticated' && !isAdmin) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
@@ -151,10 +155,10 @@ export default function AdminLayout({
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-foreground truncate">
-                {profile?.full_name || profile?.username || '管理员'}
+                {profile?.fullName || profile?.username || '管理员'}
               </p>
               <p className="text-xs text-muted-foreground truncate">
-                {profile?.role?.name === 'admin' ? '系统管理员' : '用户'}
+                {profile?.role === 'admin' ? '系统管理员' : '用户'}
               </p>
             </div>
           </div>

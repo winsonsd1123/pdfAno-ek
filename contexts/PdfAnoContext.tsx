@@ -24,7 +24,7 @@ import { createPDFRenderer, ScaleController, type PDFRenderer } from "@/lib/pdf-
 import { createTextExtractor, type PDFTextExtractor } from "@/lib/pdf-text-extractor"
 import { createAIAnnotationService, type AIAnnotationService } from "@/lib/ai-annotation-service"
 import { createAnnotationRoles, addDefaultAuthorInfo, getCurrentTimestamp } from "@/lib/annotation-utils"
-import { useAuth } from "@/contexts/AuthContext"
+import { useSession } from "next-auth/react"
 
 // 定义Context的状态接口
 interface PdfAnoContextState {
@@ -45,6 +45,7 @@ interface PdfAnoContextState {
   panelWidth: number
   isManualAnnotationMode: boolean // 新增：手动批注模式状态
   docUrl: string // 新增：文档URL，用于导出等操作
+  articleId: string | null // 新增：文章ID
   // Refs exposed for specific components
   containerRef: React.RefObject<HTMLDivElement | null>
   pageRefs: React.RefObject<Map<number, HTMLCanvasElement>>
@@ -88,11 +89,13 @@ const PdfAnoContext = createContext<PdfAnoContextType | null>(null)
 interface PdfAnoProviderProps {
   children: ReactNode
   docUrl: string
+  articleId: string | null
 }
 
 // 创建Provider组件
-export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
-  const { profile } = useAuth()
+export function PdfAnoProvider({ children, docUrl, articleId }: PdfAnoProviderProps) {
+  const { data: session } = useSession()
+  const profile = session?.user
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null)
   const [numPages, setNumPages] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)  // 新增：当前页码状态
@@ -495,6 +498,7 @@ export function PdfAnoProvider({ children, docUrl }: PdfAnoProviderProps) {
     panelWidth,
     isManualAnnotationMode,
     docUrl, // 新增：将docUrl暴露给Context消费者
+    articleId, // 新增：将articleId暴露给Context消费者
     // Refs
     containerRef,
     pageRefs,

@@ -14,7 +14,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useAuth } from '@/contexts/AuthContext';
+import { useSession } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,16 +35,16 @@ export default function SignupPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   
-  const { signUp, isAuthenticated } = useAuth();
+  const { status } = useSession();
   const router = useRouter();
   const { toast } = useToast();
 
-  // 如果已登录，重定向
+  // If user is already authenticated, redirect them
   useEffect(() => {
-    if (isAuthenticated()) {
+    if (status === 'authenticated') {
       router.push('/pdfano');
     }
-  }, [isAuthenticated, router]);
+  }, [status, router]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -89,28 +89,48 @@ export default function SignupPage() {
       return;
     }
 
-    const result = await signUp(formData.email, formData.password, {
-      username: formData.username,
-      full_name: formData.full_name,
-      id_number: formData.id_number || null,
-    });
-    
-    if (result.error) {
-      setError(result.error);
+    try {
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: formData.email,
+          password: formData.password,
+          username: formData.username,
+          fullName: formData.full_name, // API expects fullName
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        toast({
+          title: "注册成功",
+          description: "欢迎加入！现在将跳转到登录页面。",
+        });
+        router.push('/login');
+      } else {
+        setError(result.error || '发生未知错误，请重试。');
+        toast({
+          variant: "destructive",
+          title: "注册失败",
+          description: result.error || '请检查您输入的信息。',
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      const errorMessage = '无法连接到服务器，请检查您的网络。';
+      setError(errorMessage);
       toast({
         variant: "destructive",
         title: "注册失败",
-        description: result.error,
+        description: errorMessage,
       });
-    } else {
-      toast({
-        title: "注册成功",
-        description: "欢迎加入智能PDF分析平台！请查收邮箱确认邮件。",
-      });
-      router.push('/login');
+    } finally {
+      setIsLoading(false);
     }
-    
-    setIsLoading(false);
   };
 
   return (

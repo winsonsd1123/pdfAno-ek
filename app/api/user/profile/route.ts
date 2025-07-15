@@ -1,25 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase-server'
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"
+import { createSupabaseAdminClient } from "@/lib/supabase"
 import { UpdateUserInput } from '@/types/supabase'
 
 export async function PUT(request: NextRequest) {
   try {
-    const supabase = await createSupabaseServerClient()
+    const session = await getServerSession(authOptions)
     
-    // 获取当前用户
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    
-    if (authError || !user) {
+    if (!session?.user) {
       return NextResponse.json(
         { error: '未授权访问' },
         { status: 401 }
       )
     }
+    const userId = (session.user as any).id
 
-    // 解析请求体
     const updateData: UpdateUserInput = await request.json()
     
-    // 验证必要的字段
     if (!updateData || Object.keys(updateData).length === 0) {
       return NextResponse.json(
         { error: '更新数据不能为空' },
@@ -27,32 +25,41 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    // 构建更新数据，只包含允许更新的字段
     const allowedFields: (keyof UpdateUserInput)[] = [
       'full_name', 
       'username', 
-      'id_number', 
-      'avatar_url'
+      'id_number',
     ]
     
-    const updatePayload: any = {}
+    const updatePayload: Partial<UpdateUserInput> = {}
     allowedFields.forEach(field => {
+      // Ensure we don't assign undefined to the payload
       if (updateData[field] !== undefined) {
-        updatePayload[field] = updateData[field]
+        (updatePayload as any)[field] = updateData[field]
       }
     })
 
-    // 添加更新时间
+    // Do not allow updating avatar_url directly through this endpoint
+    // It should be handled by the avatar upload endpoint.
+    // Also, ensure there's something to update.
+    if (Object.keys(updatePayload).length === 0) {
+      return NextResponse.json(
+        { error: '没有提供有效字段进行更新' },
+        { status: 400 }
+      )
+    }
+
     const finalPayload = {
       ...updatePayload,
       updated_at: new Date().toISOString()
     }
 
-    // 更新用户资料
-    const { data, error } = await supabase
+    const supabaseAdmin = createSupabaseAdminClient()
+
+    const { data, error } = await supabaseAdmin
       .from('profiles')
       .update(finalPayload)
-      .eq('id', user.id)
+      .eq('id', userId)
       .select(`
         id,
         email,
@@ -60,17 +67,14 @@ export async function PUT(request: NextRequest) {
         full_name,
         avatar_url,
         id_number,
-        role_id,
-        updated_at,
-        role:roles(id, name, description)
+        role:roles(id, name)
       `)
       .single()
 
     if (error) {
       console.error('Update profile error:', error)
       
-      // 处理特定的数据库错误
-      if (error.code === '23505') { // 唯一约束违反
+      if (error.code === '23505') { // unique_violation for username
         return NextResponse.json(
           { error: '用户名已被使用，请选择其他用户名' },
           { status: 409 }

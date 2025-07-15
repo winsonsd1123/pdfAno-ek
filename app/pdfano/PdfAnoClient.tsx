@@ -54,9 +54,10 @@ export default function PdfAnoClient() {
   // Get doc info from URL, provide fallback
   const docUrl = searchParams.get('url') || "https://xpzbccdjc5ty6al1.public.blob.vercel-storage.com/advertisement-computing-rrttEVTmdSQcWy9D17QnNq77h49KFV.pdf"
   const docName = searchParams.get('name') || 'Unknown Document'
+  const articleId = searchParams.get('articleId')
   
   return (
-    <PdfAnoProvider docUrl={docUrl}>
+    <PdfAnoProvider docUrl={docUrl} articleId={articleId}>
       <PdfAnoLayout docName={docName} />
     </PdfAnoProvider>
   )

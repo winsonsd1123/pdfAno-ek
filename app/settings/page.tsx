@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useAuth } from "@/contexts/AuthContext"
+import { useSession } from "next-auth/react"
 import { UserAvatarMenu } from "@/components/ui/user-avatar-menu"
 import { PersonalInfoCard } from "@/components/settings/PersonalInfoCard"
 import { AccountSecurityCard } from "@/components/settings/AccountSecurityCard"
@@ -11,12 +11,16 @@ import { Button } from "@/components/ui/button"
 import { useEffect } from "react"
 
 export default function SettingsPage() {
-  const { isAuthenticated, loading } = useAuth()
+  const { data: session, status } = useSession()
   const router = useRouter()
+
+  // 从 NextAuth session 中获取用户状态
+  const isAuthenticated = status === 'authenticated'
+  const loading = status === 'loading'
 
   // 如果未登录，重定向到登录页
   useEffect(() => {
-    if (!loading && !isAuthenticated()) {
+    if (!loading && !isAuthenticated) {
       router.push('/login?redirect=/settings')
     }
   }, [isAuthenticated, loading, router])
@@ -31,7 +35,7 @@ export default function SettingsPage() {
   }
 
   // 如果未登录
-  if (!isAuthenticated()) {
+  if (!isAuthenticated) {
     return null // 会被重定向，这里不需要显示内容
   }
 

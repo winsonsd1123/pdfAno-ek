@@ -11,113 +11,50 @@
 // 
 // ======================================================================
 
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabase-server';
+import { withAuth } from "next-auth/middleware"
+import { NextResponse } from "next/server"
 
-// 需要认证的路由模式
-const protectedRoutes = [
-  '/pdfano',
-  '/works',
-  '/admin'
-];
+export default withAuth(
+  // `withAuth` augments your `Request` with the user's token.
+  function middleware(req) {
+    const { token } = req.nextauth
+    const { pathname } = req.nextUrl
 
-// 管理员专用路由
-const adminRoutes = [
-  '/admin'
-];
-
-// 公开路由（不需要认证）
-const publicRoutes = [
-  '/',
-  '/login',
-  '/signup',
-];
-
-export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
-
-  // 跳过 API 路由、静态文件和内部 Next.js 路由
-  if (
-    pathname.startsWith('/api/') ||
-    pathname.startsWith('/_next/') ||
-    pathname.startsWith('/favicon.ico') ||
-    pathname.includes('.')
-  ) {
-    return NextResponse.next();
-  }
-
-  // 公开路由直接放行
-  if (publicRoutes.some(route => pathname === route || pathname.startsWith(route + '/'))) {
-    return NextResponse.next();
-  }
-
-  try {
-    // 检查用户认证状态
-    const supabase = await createSupabaseServerClient();
-    const { data: { user }, error } = await supabase.auth.getUser();
-
-    // 如果获取用户信息失败或用户未登录
-    if (error || !user) {
-      const redirectUrl = new URL('/login', request.url);
-      redirectUrl.searchParams.set('redirect', pathname);
-      return NextResponse.redirect(redirectUrl);
+    // Role-based access control for admin routes
+    if (pathname.startsWith("/admin") && token?.role !== "admin") {
+      // If a non-admin tries to access an admin route, redirect them to the homepage.
+      return NextResponse.redirect(new URL("/?error=access_denied", req.url))
     }
 
-    // 检查是否需要管理员权限
-    if (adminRoutes.some(route => pathname.startsWith(route))) {
-      try {
-        // 检查用户是否有管理员权限
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select(`
-            *,
-            role:roles(*)
-          `)
-          .eq('id', user.id)
-          .single();
-
-        const isAdmin = profile?.role?.name === 'admin';
-
-        if (!isAdmin) {
-          // 没有管理员权限，重定向到主页
-          const redirectUrl = new URL('/', request.url);
-          redirectUrl.searchParams.set('error', 'access_denied');
-          return NextResponse.redirect(redirectUrl);
-        }
-      } catch (adminError) {
-        console.error('Error checking admin permissions:', adminError);
-        // 数据库查询失败，为安全起见拒绝访问
-        const redirectUrl = new URL('/', request.url);
-        redirectUrl.searchParams.set('error', 'permission_check_failed');
-        return NextResponse.redirect(redirectUrl);
-      }
-    }
-
-    // 通过所有检查，允许访问
-    return NextResponse.next();
-
-  } catch (error) {
-    console.error('Middleware error:', error);
-    
-    // 发生未预期的错误，重定向到登录页
-    const redirectUrl = new URL('/login', request.url);
-    redirectUrl.searchParams.set('redirect', pathname);
-    redirectUrl.searchParams.set('error', 'auth_error');
-    return NextResponse.redirect(redirectUrl);
+    // If all checks pass, allow the request to proceed.
+    return NextResponse.next()
+  },
+  {
+    callbacks: {
+      /**
+       * This callback is used to decide if a user is authorized to access a page.
+       * It's called before the `middleware` function above.
+       * Returning `true` continues the middleware chain.
+       * Returning `false` redirects to the sign-in page.
+       */
+      authorized: ({ token }) => {
+        // !!token returns true if the token exists (user is logged in), otherwise false.
+        return !!token
+      },
+    },
+    // If `authorized` returns false, NextAuth will redirect to this page.
+    pages: {
+      signIn: "/login",
+    },
   }
-}
+)
 
+// The `matcher` configuration specifies which routes the middleware should apply to.
 export const config = {
   matcher: [
-    /*
-     * 匹配所有路径，除了：
-     * - api 路由
-     * - _next/static (静态文件)
-     * - _next/image (图像优化文件)
-     * - favicon.ico (网站图标)
-     * - 其他静态资源
-     */
-    '/((?!api|_next/static|_next/image|favicon.ico|.*\\.).*)',
+    "/pdfano/:path*",
+    "/works/:path*",
+    "/settings/:path*",
+    "/admin/:path*",
   ],
-}; 
+} 

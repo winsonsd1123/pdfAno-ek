@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useAuth } from "@/contexts/AuthContext"
+import { useSession } from "next-auth/react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,8 +11,11 @@ import { useToast } from "@/hooks/use-toast"
 import { Shield, Lock, Save, Edit, Eye, EyeOff } from "lucide-react"
 
 export function AccountSecurityCard() {
-  const { profile } = useAuth()
+  const { data: session } = useSession()
   const { toast } = useToast()
+  
+  // 从 NextAuth session 中获取用户信息
+  const profile = session?.user
   
   const [isChangingPassword, setIsChangingPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)

@@ -10,7 +10,7 @@ import { Upload, FileText, Bot, CheckCircle, XCircle, Loader2, Eye, Edit3, Trash
 // import { DocumentStorage } from "@/lib/document-storage" // 1. 干掉野路子 localStorage 存储
 // import { DocumentMetadata, UploadResponse } from "@/types/document" // 2. 移除旧的类型定义
 import { useRouter } from "next/navigation"
-import { useAuth } from "@/contexts/AuthContext"
+import { useSession } from "next-auth/react"
 import { UserAvatarMenu } from "@/components/ui/user-avatar-menu"
 
 // 定义一个临时的文章类型，理想情况下应该从 Supabase types 导入
@@ -31,8 +31,13 @@ export default function Home() {
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
-  const { isAdmin, isAuthenticated, loading } = useAuth()
+  const { data: session, status } = useSession()
   const searchParams = useSearchParams()
+  
+  // 从 NextAuth session 中获取用户状态
+  const isAuthenticated = status === 'authenticated'
+  const isAdmin = session?.user?.role === 'admin'
+  const loading = status === 'loading'
   const { toast } = useToast()
 
   useEffect(() => {

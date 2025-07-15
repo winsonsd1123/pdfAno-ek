@@ -3,7 +3,8 @@
 // ======================================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdminClient } from '@/lib/supabase';
-import { verifyAdminUser } from '@/lib/supabase-server';
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"
 import type { ApiResponse, RoleWithPermissions } from '@/types/supabase';
 
 /**
@@ -12,6 +13,14 @@ import type { ApiResponse, RoleWithPermissions } from '@/types/supabase';
  */
 export async function GET(request: NextRequest) {
   try {
+    const session = await getServerSession(authOptions)
+    if (session?.user?.role !== 'admin') {
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: 'Forbidden' },
+        { status: 403 }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const roleIdStr = searchParams.get('roleId');
 
@@ -27,14 +36,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Invalid role ID' },
         { status: 400 }
-      );
-    }
-
-    const { isAdmin, error: authError } = await verifyAdminUser();
-    if (!isAdmin) {
-      return NextResponse.json<ApiResponse>(
-        { success: false, error: authError || 'Unauthorized' },
-        { status: 401 }
       );
     }
 

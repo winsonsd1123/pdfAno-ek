@@ -4,6 +4,9 @@ import fontkit from '@pdf-lib/fontkit'
 import fs from 'fs'
 import path from 'path'
 import { head } from '@vercel/blob'
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"
+import { createSupabaseAdminClient } from "@/lib/supabase"
 
 // 从 types/pdf-annotation.ts 复制过来，保持一致
 export interface AnnotationReply {
@@ -232,11 +235,31 @@ function createPDFAnnotation(
 }
 
 export async function POST(request: NextRequest) {
+  // Step 1: Authentication
+  const session = await getServerSession(authOptions)
+  if (!session?.user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const userId = (session.user as any).id;
+
   try {
-    const { filename, annotations: frontendAnnotations } = await request.json()
+    const { filename, annotations: frontendAnnotations, articleId } = await request.json()
     
-    if (!filename || !frontendAnnotations) {
-      return NextResponse.json({ error: 'Missing filename or annotations' }, { status: 400 })
+    if (!filename || !frontendAnnotations || !articleId) {
+      return NextResponse.json({ error: 'Missing filename, articleId, or annotations' }, { status: 400 })
+    }
+
+    // Step 2: Authorization
+    const supabaseAdmin = createSupabaseAdminClient()
+    const { data: article, error: permError } = await supabaseAdmin
+      .from('articles')
+      .select('id')
+      .eq('id', articleId)
+      .or(`uploader_id.eq.${userId},reviewer_id.eq.${userId}`)
+      .maybeSingle()
+
+    if (permError || !article) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // 执行数据转换
@@ -244,7 +267,7 @@ export async function POST(request: NextRequest) {
 
     // 读取原始PDF文件
     if (!process.env.BLOB_READ_WRITE_TOKEN) {
-      return NextResponse.json({ error: 'Blob存储未配置' }, { status: 500 })
+      return NextResponse.json({ error: 'Blob storage not configured' }, { status: 500 })
     }
 
     let existingPdfBytes: ArrayBuffer

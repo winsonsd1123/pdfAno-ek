@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useAuth } from "@/contexts/AuthContext"
+import { useSession } from "next-auth/react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,16 +12,19 @@ import { useToast } from "@/hooks/use-toast"
 import { User, Upload, Save, Edit } from "lucide-react"
 
 export function PersonalInfoCard() {
-  const { profile, refreshProfile } = useAuth()
+  const { data: session, update } = useSession()
   const { toast } = useToast()
+  
+  // 从 NextAuth session 中获取用户信息
+  const profile = session?.user
   
   const [isEditing, setIsEditing] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [formData, setFormData] = useState({
-    full_name: profile?.full_name || "",
+    full_name: profile?.fullName || "",
     username: profile?.username || "",
     id_number: profile?.id_number || "",
-    avatar_url: profile?.avatar_url || ""
+    avatar_url: profile?.avatarUrl || ""
   })
 
   // 获取用户头像首字母
@@ -58,7 +61,7 @@ export function PersonalInfoCard() {
       })
 
       if (response.ok) {
-        await refreshProfile() // 刷新用户资料
+        await update() // 刷新用户会话
         setIsEditing(false)
         toast({
           title: "保存成功",
@@ -87,10 +90,10 @@ export function PersonalInfoCard() {
   // 取消编辑
   const handleCancel = () => {
     setFormData({
-      full_name: profile?.full_name || "",
+      full_name: profile?.fullName || "",
       username: profile?.username || "",
       id_number: profile?.id_number || "",
-      avatar_url: profile?.avatar_url || ""
+      avatar_url: profile?.avatarUrl || ""
     })
     setIsEditing(false)
   }
@@ -139,8 +142,8 @@ export function PersonalInfoCard() {
         // 更新本地状态
         handleInputChange('avatar_url', result.data.avatar_url)
         
-        // 刷新用户资料
-        await refreshProfile()
+        // 刷新用户会话
+        await update()
         
         toast({
           title: "头像上传成功",
@@ -328,7 +331,7 @@ export function PersonalInfoCard() {
           <Label>账户角色</Label>
           <div className="flex items-center space-x-2">
             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-              {profile?.role?.name}
+              {profile?.role}
             </span>
           </div>
         </div>

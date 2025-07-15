@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdminClient } from '@/lib/supabase';
-import { verifyAdminUser } from '@/lib/supabase-server';
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"
 import type { 
   ApiResponse, 
   UpdateUserInput,
@@ -15,12 +16,11 @@ export async function PUT(
     { params }: { params: { id: string } }
 ) {
   try {
-    // 验证管理员权限
-    const { isAdmin, error: authError } = await verifyAdminUser();
-    if (!isAdmin) {
+    const session = await getServerSession(authOptions)
+    if (session?.user?.role !== 'admin') {
       return NextResponse.json<ApiResponse>(
-        { success: false, error: authError || 'Unauthorized' },
-        { status: 401 }
+        { success: false, error: 'Forbidden' },
+        { status: 403 }
       );
     }
 
@@ -76,12 +76,11 @@ export async function DELETE(
     { params }: { params: { id: string } }
 ) {
   try {
-    // 验证管理员权限
-    const { isAdmin, error: authError } = await verifyAdminUser();
-    if (!isAdmin) {
+    const session = await getServerSession(authOptions)
+    if (session?.user?.role !== 'admin') {
       return NextResponse.json<ApiResponse>(
-        { success: false, error: authError || 'Unauthorized' },
-        { status: 401 }
+        { success: false, error: 'Forbidden' },
+        { status: 403 }
       );
     }
 

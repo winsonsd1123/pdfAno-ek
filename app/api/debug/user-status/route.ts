@@ -1,31 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdminClient } from '@/lib/supabase';
-import { getServerUser } from '@/lib/supabase-server';
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await getServerUser();
+    const session = await getServerSession(authOptions);
     
-    if (!user) {
+    if (!session?.user) {
       return NextResponse.json({
         success: false,
         error: 'Not authenticated',
-        user: null,
-        profile: null,
-        roles: null
+        session: null,
       });
     }
-
+    
+    // For consistency, we use the user ID from the session
+    const userId = (session.user as any).id;
     const adminClient = createSupabaseAdminClient();
 
-    // 获取用户的 profile 信息
     const { data: profile, error: profileError } = await adminClient
       .from('profiles')
       .select('*')
-      .eq('id', user.id)
+      .eq('id', userId)
       .single();
 
-    // 获取用户关联的角色
     let roleInfo = null;
     if (profile?.role_id) {
       const { data: role, error: roleError } = await adminClient
@@ -37,28 +36,26 @@ export async function GET(request: NextRequest) {
       roleInfo = { role, roleError };
     }
 
-    // 获取所有角色列表
     const { data: allRoles, error: rolesError } = await adminClient
       .from('roles')
       .select('*');
 
     return NextResponse.json({
       success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        created_at: user.created_at
+      message: 'User is authenticated.',
+      session: session, // Return the full NextAuth session for debugging
+      db_check: {
+        profile: {
+          data: profile,
+          error: profileError
+        },
+        userRole: roleInfo,
+        allRoles: {
+          data: allRoles,
+          error: rolesError
+        }
       },
-      profile: {
-        data: profile,
-        error: profileError
-      },
-      userRole: roleInfo,
-      allRoles: {
-        data: allRoles,
-        error: rolesError
-      },
-      debug: {
+      derived_debug_info: {
         isAdmin: profile?.role_id && roleInfo?.role?.name === 'admin',
         hasProfile: !!profile,
         hasRoleId: !!profile?.role_id,

@@ -3,7 +3,8 @@
 // ======================================================================
 import { NextRequest, NextResponse } from 'next/server';
 import { createSupabaseAdminClient } from '@/lib/supabase';
-import { verifyAdminUser } from '@/lib/supabase-server';
+import { getServerSession } from "next-auth/next"
+import { authOptions } from "@/app/api/auth/[...nextauth]/route"
 import type { ApiResponse, RoleWithPermissions } from '@/types/supabase';
 
 /**
@@ -11,32 +12,23 @@ import type { ApiResponse, RoleWithPermissions } from '@/types/supabase';
  * 获取单个角色及其完整的权限列表
  */
 export async function GET(
-  request: Request,
+  request: NextRequest, // Changed to NextRequest for consistency
   context: { params: { id:string } }
 ) {
-  console.log("\n\n--- [GET /api/admin/roles/[id]/permissions] ---");
-  console.log("Timestamp:", new Date().toISOString());
-  console.log("Request URL:", request.url);
-  console.log("Request Headers:", JSON.stringify(Object.fromEntries(request.headers), null, 2));
-  
   try {
-    console.log("Attempting to access context.params.id...");
+    const session = await getServerSession(authOptions)
+    if (session?.user?.role !== 'admin') {
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: 'Forbidden' },
+        { status: 403 }
+      );
+    }
+    
     const roleId = parseInt(context.params.id, 10);
-    console.log("Successfully accessed roleId:", roleId);
-
     if (isNaN(roleId)) {
-      console.error("Error: roleId is NaN");
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Invalid role ID' },
         { status: 400 }
-      );
-    }
-
-    const { isAdmin, error: authError } = await verifyAdminUser();
-    if (!isAdmin) {
-      return NextResponse.json<ApiResponse>(
-        { success: false, error: authError || 'Unauthorized' },
-        { status: 401 }
       );
     }
 

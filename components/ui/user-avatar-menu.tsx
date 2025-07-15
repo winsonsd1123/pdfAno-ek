@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { useAuth } from "@/contexts/AuthContext"
+import { useSession, signOut } from "next-auth/react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Icons } from "@/components/ui/icons"
 import { ChevronDown } from "lucide-react"
+import { Skeleton } from "./skeleton"
 
 interface UserAvatarMenuProps {
   /** 组件尺寸 */
@@ -29,8 +30,10 @@ export function UserAvatarMenu({
   showUsername = false,
   className = ""
 }: UserAvatarMenuProps) {
-  const { isAuthenticated, profile, signOut, loading, isAdmin } = useAuth()
+  const { data: session, status } = useSession()
   const router = useRouter()
+
+  const user = session?.user
 
   // 获取头像尺寸
   const avatarSize = {
@@ -39,75 +42,50 @@ export function UserAvatarMenu({
     lg: "h-10 w-10"
   }[size]
 
-  // 响应式用户名显示 - 在小屏幕上隐藏用户名
-  const shouldShowUsername = showUsername
+  const handleSignIn = () => router.push('/login')
+  const handleSignUp = () => router.push('/signup')
+  const handleSignOut = () => signOut({ callbackUrl: '/' })
+  const handleSettings = () => router.push('/settings')
+  const handleAdmin = () => router.push('/admin')
 
-  // 处理登录
-  const handleSignIn = () => {
-    router.push('/login')
-  }
-
-  // 处理注册
-  const handleSignUp = () => {
-    router.push('/signup')
-  }
-
-  // 处理退出登录
-  const handleSignOut = async () => {
-    await signOut()
-    router.push('/')
-  }
-
-  // 处理个人设置
-  const handleSettings = () => {
-    router.push('/settings')
-  }
-
-  // 处理后台管理
-  const handleAdmin = () => {
-    router.push('/admin')
-  }
-
-  // 获取用户显示名称
   const getDisplayName = () => {
-    if (!profile) return "用户"
-    return profile.full_name || profile.username || "用户"
+    if (!user) return "用户"
+    return user.fullName || user.username || "用户"
   }
 
-  // 获取用户头像首字母
   const getAvatarFallback = () => {
     const name = getDisplayName()
-    return name.charAt(0).toUpperCase()
+    return name ? name.charAt(0).toUpperCase() : <Icons.user className="h-4 w-4" />
   }
 
-  // 如果正在加载
-  if (loading) {
+  // 加载状态
+  if (status === "loading") {
     return (
       <div className={`flex items-center space-x-2 ${className}`}>
-        <div className={`${avatarSize} rounded-full bg-gray-200 animate-pulse`} />
-        {shouldShowUsername && (
-          <div className="h-4 w-16 bg-gray-200 rounded animate-pulse hidden sm:block" />
+        <Skeleton className={`${avatarSize} rounded-full`} />
+        {showUsername && (
+          <Skeleton className="h-4 w-16 hidden sm:block" />
         )}
       </div>
     )
   }
 
   // 未登录状态
-  if (!isAuthenticated()) {
+  if (status === "unauthenticated") {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button 
             variant="ghost" 
-            className={`flex items-center space-x-2 hover:bg-gray-100 ${className}`}
+            className={`flex items-center space-x-2 hover:bg-gray-100 dark:hover:bg-slate-800 ${className}`}
           >
             <Avatar className={avatarSize}>
-              <AvatarFallback className="bg-gray-200 text-gray-600">
+              <AvatarFallback className="bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-gray-300">
                 <Icons.user className="h-4 w-4" />
               </AvatarFallback>
             </Avatar>
-            {shouldShowUsername && (
-              <span className="text-sm text-gray-600 hidden sm:inline">未登录</span>
+            {showUsername && (
+              <span className="text-sm text-gray-600 dark:text-gray-300 hidden sm:inline">未登录</span>
             )}
             <ChevronDown className="h-4 w-4 text-gray-400" />
           </Button>
@@ -117,11 +95,11 @@ export function UserAvatarMenu({
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleSignIn}>
             <Icons.login className="mr-2 h-4 w-4" />
-            登录
+            <span>登录</span>
           </DropdownMenuItem>
           <DropdownMenuItem onClick={handleSignUp}>
             <Icons.user className="mr-2 h-4 w-4" />
-            注册
+            <span>注册</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -134,19 +112,19 @@ export function UserAvatarMenu({
       <DropdownMenuTrigger asChild>
         <Button 
           variant="ghost" 
-          className={`flex items-center space-x-2 hover:bg-gray-100 ${className}`}
+          className={`flex items-center space-x-2 hover:bg-gray-100 dark:hover:bg-slate-800 ${className}`}
         >
           <Avatar className={avatarSize}>
             <AvatarImage 
-              src={profile?.avatar_url || undefined} 
+              src={user?.avatarUrl || undefined} 
               alt={getDisplayName()}
             />
-            <AvatarFallback className="bg-gray-700 text-white text-sm font-medium">
+            <AvatarFallback className="bg-primary text-primary-foreground font-medium">
               {getAvatarFallback()}
             </AvatarFallback>
           </Avatar>
-          {shouldShowUsername && (
-            <span className="text-sm text-gray-900 font-medium hidden sm:inline">
+          {showUsername && (
+            <span className="text-sm font-medium hidden sm:inline">
               {getDisplayName()}
             </span>
           )}
@@ -160,11 +138,11 @@ export function UserAvatarMenu({
               {getDisplayName()}
             </p>
             <p className="text-xs leading-none text-muted-foreground">
-              {profile?.username && `@${profile.username}`}
+              {user?.email}
             </p>
-            {profile?.role && (
-              <p className="text-xs leading-none text-muted-foreground">
-                {profile.role.name === 'admin' ? '系统管理员' : '普通用户'}
+            {user?.role && (
+              <p className="text-xs leading-none text-muted-foreground pt-1">
+                {user.role === 'admin' ? '系统管理员' : '普通用户'}
               </p>
             )}
           </div>
@@ -173,21 +151,20 @@ export function UserAvatarMenu({
         
         <DropdownMenuItem onClick={handleSettings}>
           <Icons.settings className="mr-2 h-4 w-4" />
-          个人设置
+          <span>个人设置</span>
         </DropdownMenuItem>
         
-        {/* 仅管理员可见 */}
-        {isAdmin() && (
+        {user?.role === 'admin' && (
           <DropdownMenuItem onClick={handleAdmin}>
             <Icons.shield className="mr-2 h-4 w-4" />
-            后台管理
+            <span>后台管理</span>
           </DropdownMenuItem>
         )}
         
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleSignOut}>
           <Icons.logout className="mr-2 h-4 w-4" />
-          退出登录
+          <span>退出登录</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
