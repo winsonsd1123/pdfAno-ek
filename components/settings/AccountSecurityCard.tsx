@@ -99,7 +99,7 @@ export function AccountSecurityCard() {
 
     setIsLoading(true)
     try {
-      const response = await fetch('/api/user/change-password', {
+      const response = await fetch('/api/setting/change-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -47,7 +47,7 @@ export function PersonalInfoCard() {
   const handleSave = async () => {
     setIsLoading(true)
     try {
-      const response = await fetch('/api/user/profile', {
+      const response = await fetch('/api/setting/profile', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -131,7 +131,7 @@ export function PersonalInfoCard() {
       formData.append('avatar', file)
 
       // 上传头像
-      const response = await fetch('/api/user/upload-avatar', {
+      const response = await fetch('/api/setting/upload-avatar', {
         method: 'POST',
         body: formData,
       })

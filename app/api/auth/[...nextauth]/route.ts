@@ -58,8 +58,9 @@ export const authOptions: AuthOptions = {
           // also add other profile data if needed
           username: profileData.username,
           fullName: profileData.full_name,
+          id_number: profileData.id_number, // Add id_number
           avatarUrl: profileData.avatar_url,
-          updated_at: user.updated_at, // Add updated_at from auth user
+          updated_at: user.updated_at || new Date().toISOString(),
         };
       },
     }),
@@ -71,6 +72,7 @@ export const authOptions: AuthOptions = {
         token.role = (user as any).role;
         token.fullName = (user as any).fullName;
         token.username = (user as any).username;
+        token.id_number = (user as any).id_number; // Add id_number
         token.avatarUrl = (user as any).avatarUrl;
         token.updated_at = (user as any).updated_at; // Add updated_at
       }
@@ -82,6 +84,7 @@ export const authOptions: AuthOptions = {
         (session.user as any).role = token.role;
         (session.user as any).fullName = token.fullName;
         (session.user as any).username = token.username;
+        (session.user as any).id_number = token.id_number; // Add id_number
         (session.user as any).avatarUrl = token.avatarUrl;
         (session.user as any).updated_at = token.updated_at; // Add updated_at
       }

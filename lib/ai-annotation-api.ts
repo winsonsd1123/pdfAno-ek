@@ -145,7 +145,7 @@ async function performAPICall(prompt: string, config: AIAnnotationConfig): Promi
   const timeoutId = setTimeout(() => controller.abort(), config.timeout)
 
   try {
-    const response = await fetch("/api/deepseek", {
+    const response = await fetch("/api/ai", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
