@@ -12,6 +12,9 @@ import { Upload, FileText, Bot, CheckCircle, XCircle, Loader2, Eye, Edit3, Trash
 import { useRouter } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { UserAvatarMenu } from "@/components/ui/user-avatar-menu"
+import { upload } from '@vercel/blob/client'
+import { validateFile, handleUploadError } from '@/lib/upload-errors'
+import { UPLOAD_CONFIG, type UploadStatus } from '@/config/upload'
 
 // 定义一个临时的文章类型，理想情况下应该从 Supabase types 导入
 type Article = {
@@ -66,33 +69,65 @@ export default function Home() {
     if (!file) return
 
     setIsUploading(true)
-    setUploadStatus("正在上传...")
+    setUploadStatus("正在验证文件...")
 
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
+      // 1. 验证文件
+      validateFile(file, {
+        maxSize: UPLOAD_CONFIG.maxSize,
+        allowedTypes: UPLOAD_CONFIG.allowedTypes
       })
 
-      // 4. 更新 API 响应处理逻辑
-      if (response.ok) {
-        const newArticle: Article = await response.json()
-        // 不再需要添加到 DocumentStorage
-        // DocumentStorage.addDocument(result.document)
-        setUploadedDocuments(prev => [newArticle, ...prev])
-        setUploadStatus("上传成功！")
-      } else {
-        const result = await response.json()
-        setUploadStatus(`上传失败: ${result.error || '未知错误'}`)
+      setUploadStatus("正在上传...")
+
+      // 2. 使用 Vercel Blob 的 upload 函数直接上传
+      const blob = await upload(file.name, file, {
+        access: 'public',
+        handleUploadUrl: '/api/upload/request-url',
+        clientPayload: JSON.stringify({ originalName: file.name }),
+        // 添加上传进度回调
+        onUploadProgress: ({ percentage }) => {
+          setUploadStatus(`正在上传... ${percentage}%`)
+        }
+      })
+
+      setUploadStatus("正在保存文件信息...")
+
+      // 3. 通知后端上传完成
+      const completeResponse = await fetch('/api/upload/complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          blobUrl: blob.url,
+          originalName: file.name,
+        }),
+      })
+
+      if (!completeResponse.ok) {
+        const error = await completeResponse.json()
+        throw new Error(error.error || '保存文件信息失败')
       }
+
+      const newArticle = await completeResponse.json()
+      setUploadedDocuments(prev => [newArticle, ...prev])
+      setUploadStatus("上传成功！")
+
     } catch (error) {
       console.error('Upload error:', error)
-      setUploadStatus("上传失败，请重试")
+      const { message, variant } = handleUploadError(error)
+      setUploadStatus(message)
+      
+      // 使用 toast 显示错误信息
+      toast({
+        title: "上传失败",
+        description: message,
+        variant
+      })
     } finally {
       setIsUploading(false)
+      // 5秒后清除状态消息
       setTimeout(() => setUploadStatus(""), 5000)
     }
   }

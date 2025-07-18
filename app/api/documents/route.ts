@@ -1,36 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from "next-auth/next"
 import { authOptions } from "@/app/api/auth/[...nextauth]/route"
-import { createSupabaseAdminClient } from "@/lib/supabase"
+import { DocumentService } from '@/services/documentService'
+import { DocumentListResponse } from '@/models/document'
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions)
 
   if (!session || !session.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    return NextResponse.json({ success: false, error: 'Unauthorized' } as DocumentListResponse, { status: 401 })
   }
   
-  const userId = (session.user as any).id;
+  const userId = (session.user as any).id
 
   try {
-    const supabaseAdmin = createSupabaseAdminClient()
-    
-    const { data: articles, error } = await supabaseAdmin
-      .from('articles')
-      .select('*, uploader:profiles!articles_uploader_id_fkey(full_name), reviewer:profiles!articles_reviewer_id_fkey(full_name)')
-      .or(`uploader_id.eq.${userId},reviewer_id.eq.${userId}`)
-      .order('uploaded_at', { ascending: false })
+    const documentService = new DocumentService()
+    const documents = await documentService.getDocumentList(userId)
 
-    if (error) {
-      console.error('Error fetching articles:', error)
-      return NextResponse.json({ error: 'Failed to fetch articles.' }, { status: 500 })
-    }
-
-    return NextResponse.json(articles)
+    return NextResponse.json({ 
+      success: true, 
+      data: documents 
+    } as DocumentListResponse)
 
   } catch (error) {
-    console.error('Unexpected error fetching articles:', error)
+    console.error('Error fetching documents:', error)
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ error: `An unexpected error occurred: ${errorMessage}` }, { status: 500 })
+    return NextResponse.json({ 
+      success: false, 
+      error: `Failed to fetch documents: ${errorMessage}` 
+    } as DocumentListResponse, { status: 500 })
   }
 }

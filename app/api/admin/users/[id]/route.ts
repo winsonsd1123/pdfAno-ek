@@ -1,22 +1,32 @@
+// ======================================================================
+// 用户管理 API - /api/admin/users/[id]
+// ======================================================================
+// 
+// 提供单个用户的更新和删除功能，仅限管理员使用
+// 支持的操作：
+// - PUT: 更新用户信息
+// - DELETE: 删除用户
+// 
+// ======================================================================
+
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseAdminClient } from '@/lib/supabase';
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/app/api/auth/[...nextauth]/route"
-import type { 
-  ApiResponse, 
-  UpdateUserInput,
-} from '@/types/supabase';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { UserService } from '@/services/userService';
+import { ApiResponse, UpdateUserRequest } from '@/models';
+
+const userService = new UserService();
 
 /**
  * PUT /api/admin/users/[id]
  * 更新用户信息
  */
 export async function PUT(
-    request: NextRequest,
-    { params }: { params: { id: string } }
+  request: NextRequest,
+  { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions);
     if (session?.user?.role !== 'admin') {
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Forbidden' },
@@ -24,44 +34,25 @@ export async function PUT(
       );
     }
 
-    const { id } = params;
+    const id = await params.id;
     if (!id) {
-        return NextResponse.json<ApiResponse>({ success: false, error: 'Invalid User ID' }, { status: 400 });
-    }
-
-    const body: UpdateUserInput = await request.json();
-    const { full_name, id_number, role_id, avatar_url } = body;
-
-    const supabase = createSupabaseAdminClient();
-
-    // 更新 profile
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({
-        full_name,
-        id_number,
-        role_id,
-        avatar_url,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id);
-
-    if (profileError) {
-      console.error('Error updating profile:', profileError);
       return NextResponse.json<ApiResponse>(
-        { success: false, error: 'Failed to update user' },
-        { status: 500 }
+        { success: false, error: 'Invalid User ID' },
+        { status: 400 }
       );
     }
+
+    const body: UpdateUserRequest = await request.json();
+    await userService.updateUser(id, body);
 
     return NextResponse.json<ApiResponse>(
       { success: true, message: 'User updated successfully' }
     );
 
-  } catch (error) {
-    console.error('Unexpected error in PUT /api/admin/users/[id]:', error);
+  } catch (error: any) {
+    console.error('Error in PUT /api/admin/users/[id]:', error);
     return NextResponse.json<ApiResponse>(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: error.message || 'Internal server error' },
       { status: 500 }
     );
   }
@@ -72,11 +63,11 @@ export async function PUT(
  * 删除用户
  */
 export async function DELETE(
-    request: NextRequest,
-    { params }: { params: { id: string } }
+  request: NextRequest,
+  { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions);
     if (session?.user?.role !== 'admin') {
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Forbidden' },
@@ -84,38 +75,25 @@ export async function DELETE(
       );
     }
 
-    const { id } = params;
+    const id = await params.id;
     if (!id) {
-      return NextResponse.json<ApiResponse>({ success: false, error: 'Invalid User ID' }, { status: 400 });
-    }
-
-    const supabase = createSupabaseAdminClient();
-    
-    // 使用 admin 权限删除用户
-    const { error: deleteUserError } = await supabase.auth.admin.deleteUser(id);
-
-    if (deleteUserError) {
-      console.error('Error deleting user:', deleteUserError);
-      // 根据错误类型返回不同的响应
-      if (deleteUserError.message.includes('User not found')) {
-        return NextResponse.json<ApiResponse>(
-            { success: false, error: 'User not found' },
-            { status: 404 }
-        );
-      }
       return NextResponse.json<ApiResponse>(
-        { success: false, error: 'Failed to delete user' },
-        { status: 500 }
+        { success: false, error: 'Invalid User ID' },
+        { status: 400 }
       );
     }
 
-    return NextResponse.json<ApiResponse>({ success: true, message: 'User deleted successfully' });
+    await userService.deleteUser(id);
 
-  } catch (error) {
-    console.error('Unexpected error in DELETE /api/admin/users/[id]:', error);
     return NextResponse.json<ApiResponse>(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
+      { success: true, message: 'User deleted successfully' }
+    );
+
+  } catch (error: any) {
+    console.error('Error in DELETE /api/admin/users/[id]:', error);
+    return NextResponse.json<ApiResponse>(
+      { success: false, error: error.message || 'Internal server error' },
+      { status: error.message?.includes('not found') ? 404 : 500 }
     );
   }
 } 

@@ -21,14 +21,38 @@ import { UserAvatarMenu } from "@/components/ui/user-avatar-menu"
 // 2. 使用统一的文章类型定义
 type Article = {
   id: string;
-  name: string;
-  url: string;
   status: string;
-  uploader_id: string;
-  reviewer_id: string | null;
+  url: string;
   uploaded_at: string;
-  uploader: { full_name: string } | null;
-  reviewer: { full_name: string } | null;
+  uploader: {
+    id: string;
+    full_name: string;
+  };
+  reviewer?: {
+    id: string;
+    full_name: string;
+  };
+}
+
+// API 响应类型
+type ApiResponse<T> = {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+// 从 URL 中提取文件名
+function getFileNameFromUrl(url: string): string {
+  try {
+    const urlParts = url.split('/')
+    const fileName = urlParts[urlParts.length - 1]
+    // URL decode 并移除可能的时间戳或其他后缀
+    const decodedName = decodeURIComponent(fileName).split('_')[0] + '.pdf'
+    return decodedName
+  } catch (error) {
+    console.error('Error extracting filename from URL:', error)
+    return '未知文件名'
+  }
 }
 
 export default function WorksPage() {
@@ -40,18 +64,18 @@ export default function WorksPage() {
   const fetchDocuments = async () => {
     try {
       setIsLoading(true)
-      // 3. 改造数据获取逻辑
       const response = await fetch('/api/documents')
-      if (response.ok) {
-        const data: Article[] = await response.json()
-        setDocuments(data)
+      const result = await response.json()
+      
+      if (response.ok && result.success && Array.isArray(result.data)) {
+        setDocuments(result.data)
       } else {
-        console.error('Failed to fetch documents')
-        setDocuments([]) // 出错时清空列表
+        console.error('Failed to fetch documents:', result.error)
+        setDocuments([])
       }
     } catch (error) {
       console.error('Error fetching documents:', error)
-      setDocuments([]) // 出错时清空列表
+      setDocuments([])
     } finally {
       setIsLoading(false)
     }
@@ -63,20 +87,22 @@ export default function WorksPage() {
 
   // 4. 改造删除逻辑
   const handleDelete = async (document: Article) => {
-    if (!confirm(`确定要删除 "${document.name}" 吗？这会一并删除云端文件，无法恢复。`)) {
+    if (!confirm(`确定要删除 "${getFileNameFromUrl(document.url)}" 吗？这会一并删除云端文件，无法恢复。`)) {
       return
     }
     setIsDeleting(document.id)
     try {
-      // 新的删除 API 更加 RESTful
       const response = await fetch(`/api/documents/${document.id}`, {
         method: 'DELETE',
       })
 
       if (response.ok) {
-        // 直接从前端状态中移除，或重新获取列表
-        // setDocuments(docs => docs.filter(d => d.id !== document.id));
-        await fetchDocuments() // 重新获取列表，保证数据同步
+        const result: ApiResponse<{ message: string }> = await response.json()
+        if (result.success) {
+          await fetchDocuments()
+        } else {
+          alert(`删除失败: ${result.error}`)
+        }
       } else {
         const result = await response.json()
         alert(`删除失败: ${result.error}`)
@@ -92,8 +118,8 @@ export default function WorksPage() {
   const handleAnnotate = (document: Article) => {
     const params = new URLSearchParams({
       url: document.url,
-      name: document.name,
-      articleId: document.id, // 添加文章ID
+      name: getFileNameFromUrl(document.url),
+      articleId: document.id,
     })
     router.push(`/pdfano?${params.toString()}`)
   }
@@ -265,13 +291,13 @@ export default function WorksPage() {
                       <TableCell className="font-medium">
                         <div className="flex items-center space-x-2">
                           <FileText className="h-4 w-4 text-red-500" />
-                          <span className="truncate max-w-xs" title={doc.name}>
-                            {doc.name}
+                          <span className="truncate max-w-xs" title={getFileNameFromUrl(doc.url)}>
+                            {getFileNameFromUrl(doc.url)}
                           </span>
                         </div>
                       </TableCell>
                       <TableCell>{getStatusChip(doc.status)}</TableCell>
-                      <TableCell>{doc.uploader?.full_name ?? "未知用户"}</TableCell>
+                      <TableCell>{doc.uploader.full_name}</TableCell>
                       <TableCell>{doc.reviewer?.full_name ?? "-"}</TableCell>
                       <TableCell>
                         <div className="flex items-center space-x-1 text-gray-600">
@@ -286,7 +312,7 @@ export default function WorksPage() {
                             onClick={() => {
                               const params = new URLSearchParams({
                                 url: doc.url,
-                                name: doc.name,
+                                name: getFileNameFromUrl(doc.url),
                                 articleId: doc.id,
                               })
                               router.push(`/pdfano?${params.toString()}`)

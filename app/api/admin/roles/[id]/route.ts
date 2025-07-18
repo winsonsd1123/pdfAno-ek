@@ -1,11 +1,71 @@
+// ======================================================================
+// 角色管理 API - /api/admin/roles/[id]
+// ======================================================================
+// 
+// 提供单个角色的查询、更新和删除功能，仅限管理员使用
+// 支持的操作：
+// - GET: 获取角色详情
+// - PUT: 更新角色信息
+// - DELETE: 删除角色
+// 
+// ======================================================================
+
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseAdminClient } from '@/lib/supabase';
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/app/api/auth/[...nextauth]/route"
-import type { 
-  ApiResponse, 
-  UpdateRoleInput,
-} from '@/types/supabase';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { RoleManagementService } from '@/services/roleManagementService';
+import { ApiResponse } from '@/models/api';
+import { RoleDto, UpdateRoleDto, RoleWithPermissionsDto } from '@/models/role';
+
+const roleManagementService = new RoleManagementService();
+
+/**
+ * GET /api/admin/roles/[id]
+ * 获取角色详情
+ */
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (session?.user?.role !== 'admin') {
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: 'Forbidden' },
+        { status: 403 }
+      );
+    }
+
+    const { id } = await params;
+    const roleId = parseInt(id, 10);
+    if (isNaN(roleId)) {
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: '无效的角色ID' },
+        { status: 400 }
+      );
+    }
+
+    const role = await roleManagementService.getRoleById(roleId);
+    if (!role) {
+      return NextResponse.json<ApiResponse>(
+        { success: false, error: '角色不存在' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json<ApiResponse<RoleWithPermissionsDto>>(
+      { success: true, data: role }
+    );
+
+  } catch (error) {
+    console.error('Unexpected error in GET /api/admin/roles/[id]:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    return NextResponse.json<ApiResponse>(
+      { success: false, error: message },
+      { status: 500 }
+    );
+  }
+}
 
 /**
  * PUT /api/admin/roles/[id]
@@ -13,75 +73,43 @@ import type {
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions);
     if (session?.user?.role !== 'admin') {
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Forbidden' },
         { status: 403 }
       );
     }
-    
-    const roleId = parseInt(params.id, 10);
+
+    const { id } = await params;
+    const roleId = parseInt(id, 10);
     if (isNaN(roleId)) {
-        return NextResponse.json<ApiResponse>({ success: false, error: 'Invalid Role ID' }, { status: 400 });
-    }
-
-    const body: UpdateRoleInput = await request.json();
-    const { name, description } = body;
-
-    const supabase = createSupabaseAdminClient();
-
-    // 如果要更新角色名，检查是否重复
-    if (name) {
-      const { data: existingRole, error: findError } = await supabase
-        .from('roles')
-        .select('id')
-        .eq('name', name)
-        .neq('id', roleId)
-        .single();
-
-      if (findError && findError.code !== 'PGRST116') { // 'PGRST116' is "exact one row not found", which is good here
-        throw findError;
-      }
-      
-      if (existingRole) {
-        return NextResponse.json<ApiResponse>(
-          { success: false, error: 'Role name already exists' },
-          { status: 409 } // 409 Conflict is more appropriate
-        );
-      }
-    }
-
-    // 更新角色
-    const { data: updatedData, error: updateError } = await supabase
-      .from('roles')
-      .update({ name, description })
-      .eq('id', roleId)
-      .select()
-      .single();
-
-    if (updateError) {
-      console.error('Error updating role:', updateError);
       return NextResponse.json<ApiResponse>(
-        { success: false, error: 'Failed to update role' },
-        { status: 500 }
+        { success: false, error: '无效的角色ID' },
+        { status: 400 }
       );
     }
 
-    return NextResponse.json<ApiResponse>({ 
-      success: true, 
-      message: 'Role updated successfully',
-      data: updatedData,
-    });
+    const body: UpdateRoleDto = await request.json();
+    const updatedRole = await roleManagementService.updateRole(roleId, body);
+
+    return NextResponse.json<ApiResponse<RoleDto>>(
+      { 
+        success: true, 
+        message: '角色更新成功',
+        data: updatedRole
+      }
+    );
 
   } catch (error) {
     console.error('Unexpected error in PUT /api/admin/roles/[id]:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json<ApiResponse>(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
+      { success: false, error: message },
+      { status: error instanceof Error && error.message.includes('已被使用') ? 409 : 500 }
     );
   }
 }
@@ -92,86 +120,38 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions);
     if (session?.user?.role !== 'admin') {
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Forbidden' },
         { status: 403 }
       );
     }
-    
-    const roleId = parseInt(params.id, 10);
+
+    const { id } = await params;
+    const roleId = parseInt(id, 10);
     if (isNaN(roleId)) {
-        return NextResponse.json<ApiResponse>({ success: false, error: 'Invalid Role ID' }, { status: 400 });
-    }
-
-    const supabase = createSupabaseAdminClient();
-
-    // 检查角色是否存在及是否为内置角色
-    const { data: role, error: findError } = await supabase
-      .from('roles')
-      .select('name')
-      .eq('id', roleId)
-      .single();
-
-    if (findError) {
-        if (findError.code === 'PGRST116') {
-            return NextResponse.json<ApiResponse>({ success: false, error: 'Role not found' }, { status: 404 });
-        }
-        throw findError;
-    }
-
-    if (role.name === 'admin' || role.name === 'user') {
-      return NextResponse.json<ApiResponse>({ success: false, error: `System role "${role.name}" cannot be deleted.` }, { status: 403 });
-    }
-
-    // 检查是否有用户关联到这个角色
-    const { count: userCount, error: userCountError } = await supabase
-      .from('user_roles')
-      .select('user_id', { count: 'exact', head: true })
-      .eq('role_id', roleId);
-
-    if (userCountError) {
-        throw userCountError;
-    }
-    
-    if (userCount && userCount > 0) {
       return NextResponse.json<ApiResponse>(
-        { success: false, error: `Cannot delete role, it is still assigned to ${userCount} user(s).` },
-        { status: 409 } // 409 Conflict
+        { success: false, error: '无效的角色ID' },
+        { status: 400 }
       );
     }
 
-    // 删除角色权限关联
-    const { error: permissionsError } = await supabase
-      .from('role_permissions')
-      .delete()
-      .eq('role_id', roleId);
-    
-    if (permissionsError) {
-      throw permissionsError;
-    }
+    await roleManagementService.deleteRole(roleId);
 
-    // 删除角色
-    const { error: deleteError } = await supabase
-      .from('roles')
-      .delete()
-      .eq('id', roleId);
-
-    if (deleteError) {
-      throw deleteError;
-    }
-
-    return NextResponse.json<ApiResponse>({ success: true, message: 'Role deleted successfully' });
+    return NextResponse.json<ApiResponse>(
+      { success: true, message: '角色删除成功' }
+    );
 
   } catch (error) {
     console.error('Unexpected error in DELETE /api/admin/roles/[id]:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json<ApiResponse>(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
+      { success: false, error: message },
+      { status: error instanceof Error && error.message.includes('不能删除') ? 403 : 500 }
     );
   }
 } 

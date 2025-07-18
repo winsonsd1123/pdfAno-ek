@@ -25,7 +25,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Loader2, Upload, User } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { Role, CreateUserInput, UpdateUserInput } from "@/types/supabase"
+import { 
+  Role, 
+  CreateUserRequest, 
+  UpdateUserRequest 
+} from '@/models';
 
 /**
  * 用户表单模式
@@ -62,7 +66,7 @@ export interface UserFormProps {
   initialData?: Partial<UserFormData>
   roles?: Role[]
   loading?: boolean
-  onSubmit: (data: CreateUserInput | UpdateUserInput) => void | Promise<void>
+  onSubmit: (data: CreateUserRequest | UpdateUserRequest) => void | Promise<void>
   onCancel?: () => void
   className?: string
 }
@@ -107,7 +111,7 @@ export function UserForm({
   const handleSubmit = async (data: UserFormData) => {
     try {
       if (isCreateMode) {
-        const createData: CreateUserInput = {
+        const createData: CreateUserRequest = {
           email: data.email,
           password: data.password!,
           username: data.username,
@@ -117,7 +121,7 @@ export function UserForm({
         }
         await onSubmit(createData)
       } else {
-        const updateData: UpdateUserInput = {
+        const updateData: UpdateUserRequest = {
           full_name: data.full_name,
           id_number: data.id_number,
           role_id: data.role_id,

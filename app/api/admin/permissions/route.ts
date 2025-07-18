@@ -11,10 +11,13 @@
 // ======================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseAdminClient } from '@/lib/supabase';
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/app/api/auth/[...nextauth]/route"
-import type { ApiResponse, Permission } from '@/types/supabase';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { RoleManagementService } from '@/services/roleManagementService';
+import { ApiResponse } from '@/models/api';
+import { PermissionDto } from '@/models/permission';
+
+const roleManagementService = new RoleManagementService();
 
 /**
  * GET /api/admin/permissions
@@ -22,7 +25,7 @@ import type { ApiResponse, Permission } from '@/types/supabase';
  */
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions);
     if (session?.user?.role !== 'admin') {
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Forbidden' },
@@ -30,31 +33,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const supabase = createSupabaseAdminClient();
+    const permissions = await roleManagementService.getAllPermissions();
 
-    // 获取所有权限
-    const { data: permissions, error } = await supabase
-      .from('permissions')
-      .select('*')
-      .order('subject', { ascending: true })
-      .order('action', { ascending: true });
-
-    if (error) {
-      console.error('Error fetching permissions:', error);
-      return NextResponse.json<ApiResponse>(
-        { success: false, error: 'Failed to fetch permissions' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json<ApiResponse<Permission[]>>(
-      { success: true, data: permissions || [] }
+    return NextResponse.json<ApiResponse<PermissionDto[]>>(
+      { success: true, data: permissions }
     );
 
   } catch (error) {
     console.error('Unexpected error in GET /api/admin/permissions:', error);
+    const message = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json<ApiResponse>(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: message },
       { status: 500 }
     );
   }

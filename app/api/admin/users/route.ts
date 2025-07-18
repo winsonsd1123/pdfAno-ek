@@ -6,23 +6,16 @@
 // 支持的操作：
 // - GET: 获取用户列表（支持分页和搜索）
 // - POST: 创建新用户
-// - PUT: 更新用户信息
-// - DELETE: 删除用户
 // 
 // ======================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createSupabaseAdminClient } from '@/lib/supabase';
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/app/api/auth/[...nextauth]/route"
-import type { 
-  ApiResponse, 
-  CreateUserInput, 
-  UpdateUserInput, 
-  UserWithRole,
-  PaginationParams,
-  PaginatedResponse 
-} from '@/types/supabase';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { UserService } from '@/services/userService';
+import { ApiResponse, CreateUserRequest } from '@/models';
+
+const userService = new UserService();
 
 /**
  * GET /api/admin/users
@@ -30,7 +23,7 @@ import type {
  */
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions);
     if (session?.user?.role !== 'admin') {
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Forbidden' },
@@ -43,57 +36,19 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '10');
     const search = searchParams.get('search') || '';
     const sortBy = searchParams.get('sortBy') || 'updated_at';
-    const sortOrder = searchParams.get('sortOrder') || 'desc';
+    const sortOrder = (searchParams.get('sortOrder') || 'desc') as 'asc' | 'desc';
 
-    const supabase = createSupabaseAdminClient();
+    const result = await userService.getUsers({
+      pagination: { page, limit },
+      search,
+      sortBy,
+      sortOrder,
+    });
 
-    // 构建查询
-    let query = supabase
-      .from('profiles')
-      .select(`
-        *,
-        role:roles(*)
-      `, { count: 'exact' });
-
-    // 添加搜索条件
-    if (search) {
-      query = query.or(`username.ilike.%${search}%,full_name.ilike.%${search}%,id_number.ilike.%${search}%`);
-    }
-
-    // 添加排序
-    query = query.order(sortBy, { ascending: sortOrder === 'asc' });
-
-    // 添加分页
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-    query = query.range(from, to);
-
-    const { data: profiles, error, count } = await query;
-
-    if (error) {
-      console.error('Error fetching users:', error);
-      return NextResponse.json<ApiResponse>(
-        { success: false, error: 'Failed to fetch users' },
-        { status: 500 }
-      );
-    }
-
-    const response: PaginatedResponse<UserWithRole> = {
-      data: profiles || [],
-      pagination: {
-        page,
-        limit,
-        total: count || 0,
-        totalPages: Math.ceil((count || 0) / limit),
-      },
-    };
-
-    return NextResponse.json<ApiResponse<PaginatedResponse<UserWithRole>>>(
-      { success: true, data: response }
-    );
+    return NextResponse.json<ApiResponse>({ success: true, data: result });
 
   } catch (error) {
-    console.error('Unexpected error in GET /api/admin/users:', error);
+    console.error('Error in GET /api/admin/users:', error);
     return NextResponse.json<ApiResponse>(
       { success: false, error: 'Internal server error' },
       { status: 500 }
@@ -107,7 +62,7 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions);
     if (session?.user?.role !== 'admin') {
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Forbidden' },
@@ -115,71 +70,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body: CreateUserInput = await request.json();
-    const { email, password, username, full_name, id_number, role_id } = body;
+    const body: CreateUserRequest = await request.json();
 
     // 基础验证
-    if (!email || !password) {
+    if (!body.email || !body.password) {
       return NextResponse.json<ApiResponse>(
         { success: false, error: 'Email and password are required' },
         { status: 400 }
       );
     }
 
-    const supabase = createSupabaseAdminClient();
-
-    // 创建认证用户
-    const { data: authUser, error: createUserError } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true, // 管理员创建的用户自动确认邮箱
-    });
-
-    if (createUserError || !authUser.user) {
-      console.error('Error creating auth user:', createUserError);
-      return NextResponse.json<ApiResponse>(
-        { success: false, error: createUserError?.message || 'Failed to create user' },
-        { status: 400 }
-      );
-    }
-
-    // 更新 profile 信息
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({
-        username,
-        full_name,
-        id_number,
-        role_id: role_id || 2, // 默认为普通用户角色
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', authUser.user.id);
-
-    if (profileError) {
-      console.error('Error updating profile:', profileError);
-      // 如果 profile 更新失败，删除已创建的认证用户
-      await supabase.auth.admin.deleteUser(authUser.user.id);
-      
-      return NextResponse.json<ApiResponse>(
-        { success: false, error: 'Failed to create user profile' },
-        { status: 500 }
-      );
-    }
+    const result = await userService.createUser(body);
 
     return NextResponse.json<ApiResponse>(
       { 
         success: true, 
         message: 'User created successfully',
-        data: { id: authUser.user.id, email: authUser.user.email }
+        data: result
       },
       { status: 201 }
     );
 
-  } catch (error) {
-    console.error('Unexpected error in POST /api/admin/users:', error);
+  } catch (error: any) {
+    console.error('Error in POST /api/admin/users:', error);
     return NextResponse.json<ApiResponse>(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
+      { 
+        success: false, 
+        error: error.message || 'Internal server error'
+      },
+      { status: error.message?.includes('already exists') ? 400 : 500 }
     );
   }
 } 

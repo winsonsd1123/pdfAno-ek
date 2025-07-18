@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/table"
 import { Loader2, Shield, Save, RotateCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { Permission, PermissionAction, PermissionSubject } from "@/types/supabase"
+import { PermissionDto, PermissionAction, PermissionSubject } from "@/models/permission"
 
 /**
  * 权限矩阵数据结构
@@ -30,7 +30,7 @@ export interface PermissionMatrix {
  * PermissionMatrix 组件属性
  */
 export interface PermissionMatrixProps {
-  permissions?: Permission[]
+  permissions?: PermissionDto[]
   selectedPermissions?: number[]
   onPermissionsChange?: (permissionIds: number[]) => void
   loading?: boolean
@@ -73,6 +73,7 @@ export function PermissionMatrix({
   }
 
   const subjectLabels: Record<string, string> = {
+    [PermissionSubject.ALL]: '所有资源',
     [PermissionSubject.DOCUMENTS]: '文档',
     [PermissionSubject.USERS]: '用户',
     [PermissionSubject.ROLES]: '角色',
@@ -81,7 +82,7 @@ export function PermissionMatrix({
 
   // 按主体分组权限
   const groupedPermissions = React.useMemo(() => {
-    const groups: Record<string, Permission[]> = {}
+    const groups: Record<string, PermissionDto[]> = {}
     
     permissions.forEach(permission => {
       const subject = permission.subject
@@ -98,7 +99,7 @@ export function PermissionMatrix({
       return a.localeCompare(b)
     })
 
-    const sortedGroups: Record<string, Permission[]> = {}
+    const sortedGroups: Record<string, PermissionDto[]> = {}
     sortedSubjects.forEach(subject => {
       // 按动作排序
       sortedGroups[subject] = groups[subject].sort((a, b) => {
@@ -127,6 +128,24 @@ export function PermissionMatrix({
   // 检查权限是否选中
   const isPermissionSelected = (permissionId: number) => {
     return selectedPermissions.includes(permissionId)
+  }
+
+  // 检查某个主体的所有权限是否都被选中
+  const isSubjectFullySelected = (subject: string) => {
+    const subjectPermissions = groupedPermissions[subject] || []
+    return subjectPermissions.every(p => isPermissionSelected(p.id))
+  }
+
+  // 检查某个动作的所有权限是否都被选中
+  const isActionFullySelected = (action: string) => {
+    return permissions
+      .filter(p => p.action === action)
+      .every(p => isPermissionSelected(p.id))
+  }
+
+  // 获取指定位置的权限
+  const getPermissionByPosition = (subject: string, action: string): PermissionDto | undefined => {
+    return groupedPermissions[subject]?.find(p => p.action === action)
   }
 
   // 处理单个权限变化
@@ -179,25 +198,6 @@ export function PermissionMatrix({
     onPermissionsChange?.(newSelectedPermissions)
   }
 
-  // 检查主体是否全选
-  const isSubjectFullySelected = (subject: string) => {
-    const subjectPermissions = groupedPermissions[subject] || []
-    return subjectPermissions.length > 0 && 
-           subjectPermissions.every(p => isPermissionSelected(p.id))
-  }
-
-  // 检查动作是否全选
-  const isActionFullySelected = (action: string) => {
-    const actionPermissions = permissions.filter(p => p.action === action)
-    return actionPermissions.length > 0 && 
-           actionPermissions.every(p => isPermissionSelected(p.id))
-  }
-
-  // 获取权限在矩阵中的位置
-  const getPermissionByPosition = (subject: string, action: string) => {
-    return permissions.find(p => p.subject === subject && p.action === action)
-  }
-
   if (loading) {
     return (
       <Card className={cn("w-full", className)}>
@@ -228,93 +228,99 @@ export function PermissionMatrix({
             <Badge variant="outline">
               已选择 {selectedPermissions.length}/{permissions.length} 个权限
             </Badge>
+            {!readOnly && (
+              <div className="flex items-center space-x-2">
+                {onReset && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onReset}
+                    disabled={loading}
+                  >
+                    <RotateCcw className="mr-1 h-4 w-4" />
+                    重置
+                  </Button>
+                )}
+                {onSave && (
+                  <Button
+                    size="sm"
+                    onClick={onSave}
+                    disabled={loading}
+                  >
+                    {loading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+                    <Save className="mr-1 h-4 w-4" />
+                    保存
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
           {/* 权限矩阵表格 */}
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-24">主体/动作</TableHead>
-                  {allActions.map(action => (
-                    <TableHead key={action} className="text-center">
-                      <div className="flex flex-col items-center space-y-1">
-                        <span>{actionLabels[action as PermissionAction] || action}</span>
-                        {!readOnly && (
-                          <Checkbox
-                            checked={isActionFullySelected(action)}
-                            onCheckedChange={(checked) => handleActionToggle(action, checked as boolean)}
-                            className="h-3 w-3"
-                          />
-                        )}
-                      </div>
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {Object.entries(groupedPermissions).map(([subject, subjectPermissions]) => (
-                  <TableRow key={subject}>
-                    <TableCell>
-                      <div className="flex items-center space-x-2">
-                        <span className="font-medium">
-                          {subjectLabels[subject as string] || subject}
-                        </span>
-                        {!readOnly && (
-                          <Checkbox
-                            checked={isSubjectFullySelected(subject)}
-                            onCheckedChange={(checked) => handleSubjectToggle(subject, checked as boolean)}
-                            className="h-3 w-3"
-                          />
-                        )}
-                      </div>
-                    </TableCell>
-                    {allActions.map(action => {
-                      const permission = getPermissionByPosition(subject, action)
-                      return (
-                        <TableCell key={action} className="text-center">
-                          {permission ? (
-                            <div className="flex justify-center">
-                              <Checkbox
-                                checked={isPermissionSelected(permission.id)}
-                                onCheckedChange={(checked) => 
-                                  handlePermissionChange(permission.id, checked as boolean)
-                                }
-                                disabled={readOnly}
-                              />
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
-                      )
-                    })}
-                  </TableRow>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-24">主体/动作</TableHead>
+                {allActions.map(action => (
+                  <TableHead key={action} className="text-center">
+                    <div className="flex flex-col items-center space-y-1">
+                      <span>{actionLabels[action as PermissionAction] || action}</span>
+                      {!readOnly && (
+                        <Checkbox
+                          checked={isActionFullySelected(action)}
+                          onCheckedChange={(checked) => handleActionToggle(action, checked as boolean)}
+                          className="h-3 w-3"
+                        />
+                      )}
+                    </div>
+                  </TableHead>
                 ))}
-              </TableBody>
-            </Table>
-          </div>
-
-          {/* 操作按钮 */}
-          {!readOnly && (onSave || onReset) && (
-            <div className="flex justify-end space-x-3">
-              {onReset && (
-                <Button variant="outline" onClick={onReset} disabled={loading}>
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  重置
-                </Button>
-              )}
-              {onSave && (
-                <Button onClick={onSave} disabled={loading}>
-                  <Save className="mr-2 h-4 w-4" />
-                  保存权限
-                </Button>
-              )}
-            </div>
-          )}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {Object.entries(groupedPermissions).map(([subject, subjectPermissions]) => (
+                <TableRow key={subject}>
+                  <TableCell>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium">
+                        {subjectLabels[subject as string] || subject}
+                      </span>
+                      {!readOnly && (
+                        <Checkbox
+                          checked={isSubjectFullySelected(subject)}
+                          onCheckedChange={(checked) => handleSubjectToggle(subject, checked as boolean)}
+                          className="h-3 w-3"
+                        />
+                      )}
+                    </div>
+                  </TableCell>
+                  {allActions.map(action => {
+                    const permission = getPermissionByPosition(subject, action)
+                    return (
+                      <TableCell key={action} className="text-center">
+                        {permission ? (
+                          <div className="flex justify-center">
+                            <Checkbox
+                              checked={isPermissionSelected(permission.id)}
+                              onCheckedChange={(checked) => 
+                                handlePermissionChange(permission.id, checked as boolean)
+                              }
+                              disabled={readOnly}
+                            />
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                    )
+                  })}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       </CardContent>
     </Card>

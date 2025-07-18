@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Loader2, Shield } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { CreateRoleInput, UpdateRoleInput } from "@/types/supabase"
+import { CreateRoleDto, UpdateRoleDto } from "@/models/role"
 
 /**
  * 角色表单模式
@@ -19,20 +19,20 @@ export type RoleFormMode = 'create' | 'edit'
  * 角色表单数据
  */
 export interface RoleFormData {
-  name: string
-  description?: string
+  name: string;
+  description: string;
 }
 
 /**
- * RoleForm 组件属性
+ * 角色表单组件属性
  */
 export interface RoleFormProps {
-  mode: RoleFormMode
-  initialData?: Partial<RoleFormData>
-  loading?: boolean
-  onSubmit: (data: CreateRoleInput | UpdateRoleInput) => void | Promise<void>
-  onCancel?: () => void
-  className?: string
+  mode: RoleFormMode;
+  initialData?: Partial<RoleFormData>;
+  loading?: boolean;
+  onSubmit: (data: CreateRoleDto | UpdateRoleDto) => Promise<void>;
+  onCancel: () => void;
+  className?: string;
 }
 
 /**
@@ -161,30 +161,21 @@ export function RoleForm({
           </div>
 
           {/* 操作按钮 */}
-          <div className="flex justify-end space-x-3 pt-4">
-            {onCancel && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onCancel}
-                disabled={loading}
-              >
-                取消
-              </Button>
-            )}
-            <Button 
-              type="submit" 
-              disabled={loading || !formData.name.trim()}
-              className="min-w-[100px]"
+          <div className="flex justify-end space-x-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onCancel}
+              disabled={loading}
             >
-              {loading ? (
-                <div className="flex items-center space-x-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>{isCreateMode ? '创建中...' : '保存中...'}</span>
-                </div>
-              ) : (
-                isCreateMode ? '创建角色' : '保存更改'
-              )}
+              取消
+            </Button>
+            <Button
+              type="submit"
+              disabled={loading}
+            >
+              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {isCreateMode ? '创建' : '保存'}
             </Button>
           </div>
         </form>

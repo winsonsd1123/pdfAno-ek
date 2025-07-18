@@ -1,94 +1,55 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/app/api/auth/[...nextauth]/route"
-import { createSupabaseAdminClient } from "@/lib/supabase"
+// ======================================================================
+// 修改密码 API - /api/setting/change-password
+// ======================================================================
 
-interface ChangePasswordRequest {
-  currentPassword: string
-  newPassword: string
-}
+import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { UserService } from '@/services/userService';
+import { ApiResponse, ChangePasswordDto } from '@/models';
+
+const userService = new UserService();
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions)
+    // 获取当前用户会话
+    const session = await getServerSession(authOptions);
     
     if (!session?.user?.email || !(session.user as any).id) {
-      return NextResponse.json(
-        { error: '未授权访问' },
-        { status: 401 }
-      )
-    }
-    const userId = (session.user as any).id
-    const userEmail = session.user.email
-
-    const { currentPassword, newPassword }: ChangePasswordRequest = await request.json()
-    
-    if (!currentPassword || !newPassword) {
-      return NextResponse.json(
-        { error: '当前密码和新密码都不能为空' },
-        { status: 400 }
-      )
+      return NextResponse.json<ApiResponse>({
+        success: false,
+        error: '未授权访问'
+      }, { status: 401 });
     }
 
-    if (newPassword.length < 6) {
-      return NextResponse.json(
-        { error: '新密码长度至少需要6位' },
-        { status: 400 }
-      )
-    }
+    // 从会话中获取用户信息
+    const userId = (session.user as any).id;
+    const userEmail = session.user.email;
 
-    if (currentPassword === newPassword) {
-      return NextResponse.json(
-        { error: '新密码不能与当前密码相同' },
-        { status: 400 }
-      )
-    }
+    // 解析请求体
+    const { currentPassword, newPassword }: ChangePasswordDto = await request.json();
 
-    const supabaseAdmin = createSupabaseAdminClient()
-
-    // Step 1: Verify the current password by trying to sign in.
-    const { error: signInError } = await supabaseAdmin.auth.signInWithPassword({
-      email: userEmail,
-      password: currentPassword
-    })
-
-    if (signInError) {
-      return NextResponse.json(
-        { error: '当前密码不正确' },
-        { status: 400 }
-      )
-    }
-
-    // Step 2: Update the password for the user using their ID.
-    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
+    // 调用服务层处理密码修改
+    await userService.changePassword({
       userId,
-      { password: newPassword }
-    )
+      email: userEmail,
+      currentPassword,
+      newPassword
+    });
 
-    if (updateError) {
-      console.error('Password update error:', updateError)
-      return NextResponse.json(
-        { error: '密码更新失败，请重试' },
-        { status: 500 }
-      )
-    }
-
-    // Step 3: Update the 'updated_at' timestamp in the user's profile.
-    await supabaseAdmin
-      .from('profiles')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('id', userId)
-
-    return NextResponse.json({
+    // 返回成功响应
+    return NextResponse.json<ApiResponse>({
       success: true,
       message: '密码修改成功'
-    })
+    });
 
-  } catch (error) {
-    console.error('Change password API error:', error)
-    return NextResponse.json(
-      { error: '服务器内部错误' },
-      { status: 500 }
-    )
+  } catch (error: any) {
+    console.error('Change password API error:', error);
+    
+    // 返回错误响应
+    return NextResponse.json<ApiResponse>({
+      success: false,
+      error: error.message || '服务器内部错误'
+    }, { status: error.message ? 400 : 500 });
   }
 } 

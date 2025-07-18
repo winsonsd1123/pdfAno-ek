@@ -110,7 +110,9 @@ export function AccountSecurityCard() {
         }),
       })
 
-      if (response.ok) {
+      const result = await response.json()
+
+      if (result.success) {
         setPasswordData({
           currentPassword: "",
           newPassword: "",
@@ -119,10 +121,9 @@ export function AccountSecurityCard() {
         setIsChangingPassword(false)
         toast({
           title: "密码修改成功",
-          description: "请使用新密码重新登录",
+          description: result.message || "请使用新密码重新登录",
         })
       } else {
-        const result = await response.json()
         toast({
           variant: "destructive",
           title: "密码修改失败",

@@ -18,7 +18,7 @@ import {
   Settings
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import type { UserWithRole } from "@/types/supabase"
+import { UserWithRole, ApiResponse } from '@/models';
 
 /**
  * 系统统计接口

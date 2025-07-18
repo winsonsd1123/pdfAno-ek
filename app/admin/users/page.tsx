@@ -34,7 +34,14 @@ import {
   Download,
   Upload
 } from "lucide-react"
-import type { UserWithRole, Role, CreateUserInput, UpdateUserInput } from "@/types/supabase"
+import { 
+  UserWithRole, 
+  Role, 
+  CreateUserRequest, 
+  UpdateUserRequest,
+  ApiResponse,
+  PaginatedResponse
+} from '@/models';
 
 /**
  * 用户状态枚举
@@ -323,7 +330,7 @@ export default function UsersPage() {
   }
 
   // 提交用户表单
-  const handleUserFormSubmit = async (data: CreateUserInput | UpdateUserInput) => {
+  const handleUserFormSubmit = async (data: CreateUserRequest | UpdateUserRequest) => {
     try {
       const isEdit = !!editingUser
       const url = isEdit ? `/api/admin/users/${editingUser.id}` : '/api/admin/users'
