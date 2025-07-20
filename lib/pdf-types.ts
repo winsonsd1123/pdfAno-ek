@@ -235,8 +235,6 @@ export interface AIServiceResponse {
 
 // AI批注配置类型
 export interface AIAnnotationConfig {
-  model: string
-  prompt: string
   maxRetries?: number
   timeout?: number
 }

@@ -40,7 +40,7 @@ export class AIAnnotationService {
   private textExtractor: any = null
   private searchFunction: any = null
   private options: AIAnnotationServiceOptions
-  private isProcessing = false
+  private _isProcessing = false
 
   constructor(options: AIAnnotationServiceOptions = {}) {
     this.options = options
@@ -73,12 +73,12 @@ export class AIAnnotationService {
       throw new Error("AI批注服务未正确初始化")
     }
 
-    if (this.isProcessing) {
+    if (this.getIsProcessing()) {
       console.warn("⚠️ 已有AI批注任务正在进行中")
       return []
     }
 
-    this.isProcessing = true
+    this._isProcessing = true
     const debugInfo: DebugInfo[] = []
 
     try {
@@ -137,7 +137,7 @@ export class AIAnnotationService {
       this.reportProgress(`批注失败：${(error as any).message}`)
       throw error
     } finally {
-      this.isProcessing = false
+      this._isProcessing = false
     }
   }
 
@@ -240,15 +240,21 @@ export class AIAnnotationService {
 
     if (location) {
       debugEntry.coordinates = {
-        viewport: { x: location.x.toFixed(2), y: location.y.toFixed(2) },
-        pdf: { 
-          x: location.x.toFixed(2), 
-          y: (location.pageSize.height - location.y).toFixed(2) 
+        viewport: { 
+          x: location.coordinates.viewportCoordinates.x.toFixed(2), 
+          y: location.coordinates.viewportCoordinates.y.toFixed(2) 
         },
-        size: { w: location.width.toFixed(2), h: location.height.toFixed(2) },
+        pdf: { 
+          x: location.coordinates.pdfCoordinates.x.toFixed(2), 
+          y: location.coordinates.pdfCoordinates.y.toFixed(2) 
+        },
+        size: { 
+          w: location.coordinates.viewportCoordinates.width.toFixed(2), 
+          h: location.coordinates.viewportCoordinates.height.toFixed(2) 
+        },
         pageSize: { 
-          w: location.pageSize.width.toFixed(0), 
-          h: location.pageSize.height.toFixed(0) 
+          w: location.coordinates.pageSize.width.toFixed(0), 
+          h: location.coordinates.pageSize.height.toFixed(0) 
         }
       }
       console.log(`✅ 找到文本位置:`, debugEntry.coordinates)
@@ -269,18 +275,18 @@ export class AIAnnotationService {
     if (location) {
       coordinates = {
         pdfCoordinates: {
-          x: location.x,
-          y: location.pageSize.height - location.y,
-          width: location.width,
-          height: location.height,
+          x: location.coordinates.pdfCoordinates.x,
+          y: location.coordinates.pdfCoordinates.y,
+          width: location.coordinates.pdfCoordinates.width,
+          height: location.coordinates.pdfCoordinates.height,
         },
         viewportCoordinates: {
-          x: location.x,
-          y: location.y,
-          width: location.width,
-          height: location.height,
+          x: location.coordinates.viewportCoordinates.x,
+          y: location.coordinates.viewportCoordinates.y,
+          width: location.coordinates.viewportCoordinates.width,
+          height: location.coordinates.viewportCoordinates.height,
         },
-        pageSize: location.pageSize,
+        pageSize: location.coordinates.pageSize,
       }
     }
 
@@ -328,13 +334,17 @@ export class AIAnnotationService {
         const fallbackX = 50
         const fallbackY = 50 + existingCount * 30
 
+        if (!this.pdfDoc) {
+          throw new Error("PDF文档未初始化")
+        }
+
         const fallbackCoordinates = await createCoordinatesFromLegacyUtil({
           x: fallbackX,
           y: fallbackY,
           width: 100,
           height: 20,
           pageIndex: pageIndex
-        })
+        }, this.pdfDoc)
 
         finalCoordinates = fallbackCoordinates || {
           pdfCoordinates: { x: fallbackX, y: fallbackY, width: 100, height: 20 },
@@ -346,10 +356,10 @@ export class AIAnnotationService {
       const finalAnnotation: Annotation = {
         id: annotation.id,
         pageIndex: location ? location.pageIndex : Math.max(0, (annotation.page || 1) - 1),
-        x: location ? location.x : 50,
-        y: location ? location.y : 50 + finalAnnotations.filter(a => a.pageIndex === Math.max(0, (annotation.page || 1) - 1)).length * 30,
-        width: location ? location.width : 100,
-        height: location ? location.height : 20,
+        x: location ? location.coordinates.viewportCoordinates.x : 50,
+        y: location ? location.coordinates.viewportCoordinates.y : 50 + finalAnnotations.filter(a => a.pageIndex === Math.max(0, (annotation.page || 1) - 1)).length * 30,
+        width: location ? location.coordinates.viewportCoordinates.width : 100,
+        height: location ? location.coordinates.viewportCoordinates.height : 20,
         content: annotation.title,
         type: "highlight",
         author: {
@@ -395,8 +405,8 @@ export class AIAnnotationService {
    * 检查服务是否正在处理
    * @returns 是否正在处理
    */
-  isProcessing(): boolean {
-    return this.isProcessing
+  getIsProcessing(): boolean {
+    return this._isProcessing
   }
 
   /**
@@ -406,7 +416,7 @@ export class AIAnnotationService {
     this.pdfDoc = null
     this.textExtractor = null
     this.searchFunction = null
-    this.isProcessing = false
+    this._isProcessing = false
     console.log("🗑️ AI批注服务已销毁")
   }
 }

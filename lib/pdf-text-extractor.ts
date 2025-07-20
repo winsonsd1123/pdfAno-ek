@@ -378,16 +378,7 @@ export class PDFTextExtractor {
 
         // 检查是否找到结果并需要立即返回
         if (returnFirst && results.length > 0) {
-          const firstResult = results[0]
-          return {
-            pageIndex: firstResult.pageIndex,
-            x: firstResult.x,
-            y: firstResult.y,
-            width: firstResult.width,
-            height: firstResult.height,
-            text: firstResult.text,
-            pageSize: firstResult.coordinates.pageSize,
-          } as any
+          return results[0] // 直接返回完整的SearchResult对象
         }
       }
 
