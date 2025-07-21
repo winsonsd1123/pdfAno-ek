@@ -2,7 +2,7 @@
 // 权限数据访问层
 // ======================================================================
 
-import { createSupabaseAdminClient } from '@/lib/supabase';
+import { createSupabaseAdminClient } from '@/lib/server/supabase';
 import { PermissionDto } from '@/models/permission';
 
 export class PermissionRepository {

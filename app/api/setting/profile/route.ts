@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from "next-auth/next"
 import { authOptions } from "@/app/api/auth/[...nextauth]/route"
-import { createSupabaseAdminClient } from "@/lib/supabase"
+import { createSupabaseAdminClient } from "@/lib/server/supabase"
 import { UpdateUserInput } from '@/types/supabase'
 
 export async function PUT(request: NextRequest) {

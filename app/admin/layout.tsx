@@ -18,7 +18,7 @@ import { usePathname } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/ui/icons';
-import { cn } from '@/lib/utils';
+import { cn } from '@/lib/client/utils';
 
 interface NavItem {
   title: string;

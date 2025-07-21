@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { usePdfAnoContext } from '@/contexts/PdfAnoContext'
-import { calculateDisplayPosition as calculateDisplayPositionUtil } from "@/lib/pdf-coordinate-utils"
+import { calculateDisplayPosition as calculateDisplayPositionUtil } from "@/lib/client/pdf-coordinate-utils"
 import type { Annotation } from '@/types/pdf-annotation'
 
 export function PdfViewer() {

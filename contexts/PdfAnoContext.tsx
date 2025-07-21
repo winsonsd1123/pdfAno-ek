@@ -19,11 +19,11 @@ import type {
 } from "@/types/pdf-annotation"
 
 // 导入PDF工具模块
-import { loadPDFDocument } from "@/lib/pdf-loader"
-import { createPDFRenderer, ScaleController, type PDFRenderer } from "@/lib/pdf-renderer"
-import { createTextExtractor, type PDFTextExtractor } from "@/lib/pdf-text-extractor"
-import { createAIAnnotationService, type AIAnnotationService } from "@/lib/ai-annotation-service"
-import { createAnnotationRoles, addDefaultAuthorInfo, getCurrentTimestamp } from "@/lib/annotation-utils"
+import { loadPDFDocument } from "@/lib/client/pdf-loader"
+import { createPDFRenderer, ScaleController, type PDFRenderer } from "@/lib/client/pdf-renderer"
+import { createTextExtractor, type PDFTextExtractor } from "@/lib/client/pdf-text-extractor"
+import { createAIAnnotationService, type AIAnnotationService } from "@/lib/client/ai-annotation-service"
+import { createAnnotationRoles, addDefaultAuthorInfo, getCurrentTimestamp } from "@/lib/client/annotation-utils"
 import { useSession } from "next-auth/react"
 
 // 定义Context的状态接口

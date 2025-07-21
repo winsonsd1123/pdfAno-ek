@@ -17,7 +17,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   }
 
   const userId = (session.user as any).id
-  const documentId = await Promise.resolve(params.id)
+  const { id: documentId } = await params
 
   if (!documentId) {
     return NextResponse.json({

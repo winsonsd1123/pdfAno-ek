@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Loader2, Shield } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/client/utils"
 import { CreateRoleDto, UpdateRoleDto } from "@/models/role"
 
 /**

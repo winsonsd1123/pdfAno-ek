@@ -2,7 +2,7 @@
 // 角色数据访问层
 // ======================================================================
 
-import { createSupabaseAdminClient } from '@/lib/supabase';
+import { createSupabaseAdminClient } from '@/lib/server/supabase';
 import { RoleDto, RoleWithPermissionsDto, RoleWithStatsDto, CreateRoleDto, UpdateRoleDto } from '@/models/role';
 import { PermissionDto } from '@/models/permission';
 

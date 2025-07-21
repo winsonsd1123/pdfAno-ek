@@ -23,7 +23,7 @@ import {
   Search,
   Loader2
 } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/client/utils"
 
 /**
  * 表格列定义接口

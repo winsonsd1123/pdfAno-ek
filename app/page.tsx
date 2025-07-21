@@ -13,8 +13,9 @@ import { useRouter } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { UserAvatarMenu } from "@/components/ui/user-avatar-menu"
 import { upload } from '@vercel/blob/client'
-import { validateFile, handleUploadError } from '@/lib/upload-errors'
 import { UPLOAD_CONFIG, type UploadStatus } from '@/config/upload'
+import { validateFile } from '@/lib/client/uploadUtils'
+import { FileUploadError } from '@/lib/common/errors'
 
 // 定义一个临时的文章类型，理想情况下应该从 Supabase types 导入
 type Article = {
@@ -116,10 +117,18 @@ export default function Home() {
 
     } catch (error) {
       console.error('Upload error:', error)
-      const { message, variant } = handleUploadError(error)
+      let message = '发生未知错误，请稍后重试。'
+      let variant: "default" | "destructive" | null | undefined = "destructive"
+
+      if (error instanceof FileUploadError) {
+        message = error.message
+      } else if (error instanceof Error) {
+        // 处理 Vercel Blob SDK 可能抛出的错误或其他标准错误
+        message = error.message;
+      }
+      
       setUploadStatus(message)
       
-      // 使用 toast 显示错误信息
       toast({
         title: "上传失败",
         description: message,
@@ -328,8 +337,8 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {uploadedDocuments.slice(0, 3).map((doc) => (
-                    <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
+                  {uploadedDocuments.slice(0, 3).map((doc, index) => (
+                    <div key={doc.id || `doc-${index}`} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
                       <div className="flex items-center space-x-3">
                         <FileText className="h-5 w-5 text-red-500" />
                         <div>

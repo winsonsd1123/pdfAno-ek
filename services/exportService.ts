@@ -1,7 +1,7 @@
 import { head } from '@vercel/blob';
 import { DocumentRepository } from '@/dal/documentRepository';
 import { ExportRequestDto } from '@/models/export';
-import { embedAnnotations } from '@/lib/pdf-annotation-embedder';
+import { embedAnnotations } from '@/lib/server/pdf-embedder';
 import { ApiError } from '@/models/api';
 
 export class ExportService {

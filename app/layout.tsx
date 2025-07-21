@@ -3,7 +3,7 @@ import './globals.css'
 import { Providers } from './providers'
 import { ThemeProvider } from 'next-themes'
 import { Toaster } from '@/components/ui/toaster'
-import { cn } from '@/lib/utils'
+import { cn } from '@/lib/client/utils'
 
 export const metadata: Metadata = {
   title: 'PDF Analyzer - 智能PDF文档分析工具',

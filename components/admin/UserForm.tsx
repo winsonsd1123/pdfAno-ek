@@ -24,7 +24,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Loader2, Upload, User } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/client/utils"
 import { 
   Role, 
   CreateUserRequest, 

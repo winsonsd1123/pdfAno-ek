@@ -1,6 +1,6 @@
 import NextAuth, { AuthOptions, User } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { createSupabaseAdminClient } from "@/lib/supabase";
+import { createSupabaseAdminClient } from "@/lib/server/supabase";
 
 export const authOptions: AuthOptions = {
   providers: [

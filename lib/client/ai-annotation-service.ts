@@ -8,9 +8,9 @@ import type {
   AIAnnotationProgressCallback,
   AIAnnotationLocationResult,
   DebugInfo
-} from './pdf-types'
+} from '../common/pdf-types'
 
-import { parseAIAnnotationResponse, getParseStatistics } from './ai-annotation-parser'
+import { parseAIAnnotationResponse } from '../common/ai-annotation-parser'
 import { callDeepSeekAPI, validateAPIConfig } from './ai-annotation-api'
 import { 
   mergeAnnotationContent, 
@@ -103,10 +103,6 @@ export class AIAnnotationService {
       if (parsedAnnotations.length === 0) {
         throw new Error("未能解析出有效的批注内容")
       }
-
-      // 打印解析统计
-      const stats = getParseStatistics(apiResponse.content, parsedAnnotations)
-      console.log("📊 解析统计:", stats)
 
       this.reportProgress("正在定位批注位置...")
 

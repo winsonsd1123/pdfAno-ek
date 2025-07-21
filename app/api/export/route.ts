@@ -6,44 +6,60 @@ import { ExportService } from '@/services/exportService'
 import { ApiError } from '@/models/api'
 
 export async function POST(request: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  const userId = (session.user as any).id;
-
   try {
-    const requestData: ExportRequestDto = await request.json()
-    
-    if (!requestData.filename || !requestData.annotations || !requestData.articleId) {
-      return NextResponse.json({ error: 'Missing filename, articleId, or annotations' }, { status: 400 })
+    // 1. 会话验证
+    const session = await getServerSession(authOptions)
+    if (!session?.user) {
+      return NextResponse.json({ error: '未登录或会话已过期' }, { status: 401 })
+    }
+    const userId = (session.user as any).id
+    if (!userId) {
+      return NextResponse.json({ error: '无效的用户会话' }, { status: 401 })
     }
 
-    const exportService = new ExportService();
-    const pdfBytes = await exportService.exportPdfWithAnnotations(userId, requestData);
+    // 2. 请求体验证
+    const body: ExportRequestDto = await request.json()
+    if (!body.filename || !body.annotations || !Array.isArray(body.annotations)) {
+      return NextResponse.json({ error: '无效的请求体：缺少必要字段' }, { status: 400 })
+    }
+    if (!body.articleId) {
+      return NextResponse.json({ error: '无效的请求体：缺少 articleId' }, { status: 400 })
+    }
 
-    const now = new Date();
-    const timestamp = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}${now.getSeconds().toString().padStart(2, '0')}`;
-    const exportFilename = `export_${timestamp}.pdf`;
+    // 3. 导出处理
+    const exportService = new ExportService();
+    const pdfBytes = await exportService.exportPdfWithAnnotations(userId, body);
+
+    // 4. 返回响应
+    const headers = new Headers()
+    headers.set('Content-Type', 'application/pdf')
     
+    // 生成导出文件名：annotation-YYYYMMDD-HHMMSS.pdf
+    const now = new Date()
+    const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`
+    const exportFilename = `easyanno-${timestamp}.pdf`
+    
+    headers.set('Content-Disposition', `attachment; filename="${encodeURIComponent(exportFilename)}"`)
+
     return new NextResponse(pdfBytes, {
       status: 200,
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${exportFilename}"`,
-      },
+      headers,
     })
-
   } catch (error) {
-    console.error('Export error:', error)
+    console.error('导出PDF时发生错误:', error)
+    
+    // 处理已知的业务错误
     if (error instanceof ApiError) {
-        return NextResponse.json({ 
-            error: error.message, 
-        }, { status: error.statusCode })
+      const statusCode = error.statusCode || 500
+      const message = error.message || '导出失败'
+      return NextResponse.json({ error: message }, { status: statusCode })
     }
-    return NextResponse.json({ 
-      error: 'Failed to export PDF', 
-      details: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 })
+
+    // 处理未知错误
+    console.error('导出PDF时发生未知错误:', error)
+    return NextResponse.json(
+      { error: '导出PDF时发生错误，请稍后重试' }, 
+      { status: 500 }
+    )
   }
 }

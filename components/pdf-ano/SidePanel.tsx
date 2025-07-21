@@ -12,7 +12,7 @@ import { AnnotationIcon, AnnotationAuthorName } from "@/components/ui/annotation
 import { QuotedText } from "@/components/ui/quoted-text"
 import { Search, MessageSquare, MapPin, MoreVertical, Trash2 } from "lucide-react"
 import { usePdfAnoContext } from '@/contexts/PdfAnoContext'
-import { createAnnotationRoles, addDefaultAuthorInfo, getCurrentTimestamp, formatTimestamp } from '@/lib/annotation-utils'
+import { createAnnotationRoles, addDefaultAuthorInfo, getCurrentTimestamp, formatTimestamp } from '@/lib/client/annotation-utils'
 import { useSession } from 'next-auth/react'
 import {
   DropdownMenu,

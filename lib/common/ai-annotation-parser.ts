@@ -166,25 +166,3 @@ export function createParseError(message: string, details?: any): AIAnnotationEr
     details
   }
 }
-
-/**
- * 获取解析统计信息
- * @param originalResponse - 原始响应
- * @param parsedAnnotations - 解析后的批注
- * @returns 统计信息
- */
-export function getParseStatistics(originalResponse: string, parsedAnnotations: AIAnnotationRawData[]) {
-  const blocks = originalResponse.split("---ANNOTATION---").filter(block => block.trim()).length - 1
-  
-  return {
-    totalBlocks: blocks,
-    successfulParse: parsedAnnotations.length,
-    successRate: blocks > 0 ? Math.round((parsedAnnotations.length / blocks) * 100) : 0,
-    avgTitleLength: parsedAnnotations.length > 0 
-      ? Math.round(parsedAnnotations.reduce((sum, ann) => sum + ann.title.length, 0) / parsedAnnotations.length)
-      : 0,
-    avgDescriptionLength: parsedAnnotations.length > 0
-      ? Math.round(parsedAnnotations.reduce((sum, ann) => sum + ann.description.length, 0) / parsedAnnotations.length)
-      : 0
-  }
-}

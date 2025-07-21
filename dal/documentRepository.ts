@@ -1,4 +1,4 @@
-import { createSupabaseAdminClient } from "@/lib/supabase"
+import { createSupabaseAdminClient } from "@/lib/server/supabase"
 import { DocumentEntity } from "@/models/document"
 
 export class DocumentRepository {

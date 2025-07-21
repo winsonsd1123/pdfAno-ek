@@ -14,7 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Loader2, Shield, Save, RotateCcw } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/client/utils"
 import { PermissionDto, PermissionAction, PermissionSubject } from "@/models/permission"
 
 /**

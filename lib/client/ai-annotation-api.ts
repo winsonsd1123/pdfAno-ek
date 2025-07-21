@@ -1,4 +1,4 @@
-import type { AIServiceResponse, AIAnnotationConfig, AIAnnotationError } from './pdf-types'
+import type { AIServiceResponse, AIAnnotationConfig, AIAnnotationError } from '../common/pdf-types'
 
 /**
  * AI批注API调用服务
