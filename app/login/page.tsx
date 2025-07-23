@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState } from "react"
-import { signIn, getSession } from "next-auth/react"
+import { signIn } from "next-auth/react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,7 +19,7 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
-  const callbackUrl = searchParams.get("callbackUrl") || "/"
+  const callbackUrl = searchParams.get("callbackUrl") || "/works"
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -27,17 +27,20 @@ export default function LoginPage() {
     setIsLoading(true)
 
     try {
+      console.log("Attempting to sign in with:", email)
+
       const result = await signIn("credentials", {
         email,
         password,
         redirect: false,
       })
 
+      console.log("Sign in result:", result)
+
       if (result?.error) {
-        setError(result.error)
+        setError("邮箱或密码错误")
       } else if (result?.ok) {
-        // Wait for session to be established
-        await getSession()
+        console.log("Sign in successful, redirecting to:", callbackUrl)
         router.push(callbackUrl)
         router.refresh()
       }
@@ -54,7 +57,9 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-2xl font-bold text-center">登录</CardTitle>
-          <CardDescription className="text-center">请输入您的邮箱和密码登录</CardDescription>
+          <CardDescription className="text-center">
+            测试账户: admin@test.com / admin123 或 user@test.com / user123
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
