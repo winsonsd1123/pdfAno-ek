@@ -47,4 +47,4 @@ export async function POST(request: NextRequest) {
       error: '服务器内部错误，请稍后重试。'
     }, { status: 500 });
   }
-} 
+}

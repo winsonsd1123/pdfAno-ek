@@ -54,4 +54,4 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       error: error instanceof Error ? error.message : 'Failed to delete document'
     }, { status: 500 })
   }
-} 
+}

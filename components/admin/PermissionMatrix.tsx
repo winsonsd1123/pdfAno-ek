@@ -325,4 +325,4 @@ export function PermissionMatrix({
       </CardContent>
     </Card>
   )
-} 
+}

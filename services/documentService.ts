@@ -59,4 +59,4 @@ export class DocumentService {
       console.error(`Failed to delete blob file [${document.url}], but database record was deleted.`, error)
     }
   }
-} 
+}

@@ -90,4 +90,4 @@ export interface UserListResponse {
     total: number;
     totalPages: number;
   };
-} 
+}

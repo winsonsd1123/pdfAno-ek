@@ -206,4 +206,4 @@ export async function embedAnnotations(
         useObjectStreams: false,
         addDefaultPage: false,
     });
-} 
+}

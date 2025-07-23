@@ -99,7 +99,7 @@
 ## 技术要点
 
 ### useAuth → useSession 迁移映射
-```typescript
+\`\`\`typescript
 // 旧方式
 const { profile, isAuthenticated, isAdmin, loading } = useAuth()
 
@@ -109,10 +109,10 @@ const profile = session?.user
 const isAuthenticated = status === 'authenticated'
 const isAdmin = session?.user?.role === 'admin'
 const loading = status === 'loading'
-```
+\`\`\`
 
 ### 用户信息获取
-```typescript
+\`\`\`typescript
 // 旧方式
 profile?.full_name
 profile?.email
@@ -122,16 +122,16 @@ profile?.avatar_url
 session?.user?.fullName
 session?.user?.email  
 session?.user?.avatarUrl
-```
+\`\`\`
 
 ### 刷新用户信息
-```typescript
+\`\`\`typescript
 // 旧方式
 await refreshProfile()
 
 // 新方式
 await update() // 或重新获取session
-```
+\`\`\`
 
 ## 风险控制
 
@@ -160,4 +160,4 @@ await update() // 或重新获取session
 **优先级**: P0 (应用无法启动)
 **负责人**: 待分配
 **创建时间**: 2024年当前日期
-**状态**: 待开始 
+**状态**: 待开始

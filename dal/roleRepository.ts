@@ -164,4 +164,4 @@ export class RoleRepository {
     if (error) throw error;
     return data.length > 0;
   }
-} 
+}

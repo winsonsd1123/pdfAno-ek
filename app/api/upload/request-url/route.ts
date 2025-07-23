@@ -11,4 +11,4 @@ export async function POST(request: NextRequest) {
   }
 
   return DocumentStorage.handleUploadRequest(request)
-} 
+}

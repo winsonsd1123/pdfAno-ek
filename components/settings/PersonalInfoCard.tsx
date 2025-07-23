@@ -338,4 +338,4 @@ export function PersonalInfoCard() {
       </CardContent>
     </Card>
   )
-} 
+}

@@ -59,4 +59,4 @@ export interface UpdateRolePermissionsDto {
 export enum RoleName {
   ADMIN = 'admin',
   USER = 'user',
-} 
+}

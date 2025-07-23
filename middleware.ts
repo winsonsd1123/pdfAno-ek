@@ -1,60 +1,40 @@
-// ======================================================================
-// 中间件 - 路由保护和权限验证
-// ======================================================================
-// 
-// 功能：
-// 1. 保护需要认证的路由
-// 2. 管理员权限验证
-// 3. 自动重定向到登录页
-// 
-// 重构后：配合新的API认证流程
-// 
-// ======================================================================
-
-import { withAuth } from "next-auth/middleware"
 import { NextResponse } from "next/server"
+import type { NextRequest } from "next/server"
+import { getToken } from "next-auth/jwt"
 
-export default withAuth(
-  // `withAuth` augments your `Request` with the user's token.
-  function middleware(req) {
-    const { token } = req.nextauth
-    const { pathname } = req.nextUrl
+export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
 
-    // Role-based access control for admin routes
-    if (pathname.startsWith("/admin") && token?.role !== "admin") {
-      // If a non-admin tries to access an admin route, redirect them to the homepage.
-      return NextResponse.redirect(new URL("/?error=access_denied", req.url))
-    }
+  // Get the token from the request
+  const token = await getToken({
+    req: request,
+    secret: process.env.NEXTAUTH_SECRET,
+  })
 
-    // If all checks pass, allow the request to proceed.
-    return NextResponse.next()
-  },
-  {
-    callbacks: {
-      /**
-       * This callback is used to decide if a user is authorized to access a page.
-       * It's called before the `middleware` function above.
-       * Returning `true` continues the middleware chain.
-       * Returning `false` redirects to the sign-in page.
-       */
-      authorized: ({ token }) => {
-        // !!token returns true if the token exists (user is logged in), otherwise false.
-        return !!token
-      },
-    },
-    // If `authorized` returns false, NextAuth will redirect to this page.
-    pages: {
-      signIn: "/login",
-    },
+  // Protected routes that require authentication
+  const protectedRoutes = ["/pdfano", "/works", "/settings", "/admin"]
+
+  // Check if the current path is a protected route
+  const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route))
+
+  // If it's a protected route and user is not authenticated
+  if (isProtectedRoute && !token) {
+    const loginUrl = new URL("/login", request.url)
+    loginUrl.searchParams.set("callbackUrl", pathname)
+    return NextResponse.redirect(loginUrl)
   }
-)
 
-// The `matcher` configuration specifies which routes the middleware should apply to.
+  // Role-based access control for admin routes
+  if (pathname.startsWith("/admin") && token?.role !== "admin") {
+    // If a non-admin tries to access an admin route, redirect them to the homepage
+    const homeUrl = new URL("/?error=access_denied", request.url)
+    return NextResponse.redirect(homeUrl)
+  }
+
+  // If all checks pass, allow the request to proceed
+  return NextResponse.next()
+}
+
 export const config = {
-  matcher: [
-    "/pdfano/:path*",
-    "/works/:path*",
-    "/settings/:path*",
-    "/admin/:path*",
-  ],
-} 
+  matcher: ["/pdfano/:path*", "/works/:path*", "/settings/:path*", "/admin/:path*"],
+}

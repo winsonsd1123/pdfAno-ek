@@ -10,14 +10,14 @@
 
 在 `services/aiService.ts` 中创建了 `AiService` 类，封装了与 DeepSeek API 的交互逻辑：
 
-```typescript
+\`\`\`typescript
 export class AiService {
   async analyze(prompt: string, model?: string) {
     // DeepSeek API 调用逻辑
     // 包含：配置读取、API 调用、错误处理等
   }
 }
-```
+\`\`\`
 
 ### 2. 精简 API 路由层
 

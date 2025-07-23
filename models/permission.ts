@@ -49,4 +49,4 @@ export interface RolePermissionDto {
 export interface PermissionCheckDto {
   hasPermission: boolean;
   reason?: string;
-} 
+}

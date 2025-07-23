@@ -51,4 +51,4 @@ export enum TableName {
   ROLES = 'roles',
   PERMISSIONS = 'permissions',
   ROLE_PERMISSIONS = 'role_permissions',
-} 
+}

@@ -92,4 +92,4 @@ export class PermissionRepository {
     if (error) throw error;
     return data.length === ids.length;
   }
-} 
+}

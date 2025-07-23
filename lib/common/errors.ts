@@ -20,4 +20,4 @@ export class FileUploadError extends AppError {
     super(message);
     this.name = 'FileUploadError';
   }
-} 
+}

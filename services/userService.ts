@@ -125,4 +125,4 @@ export class UserService {
     // 更新密码
     await this.userRepository.updatePassword(userId, newPassword);
   }
-} 
+}

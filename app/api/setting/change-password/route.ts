@@ -52,4 +52,4 @@ export async function POST(request: NextRequest) {
       error: error.message || '服务器内部错误'
     }, { status: error.message ? 400 : 500 });
   }
-} 
+}

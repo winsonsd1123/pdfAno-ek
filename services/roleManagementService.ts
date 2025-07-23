@@ -138,4 +138,4 @@ export class RoleManagementService {
   async getRolePermissions(roleId: number): Promise<PermissionDto[]> {
     return this.permissionRepo.findByRoleId(roleId);
   }
-} 
+}

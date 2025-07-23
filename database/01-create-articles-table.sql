@@ -37,4 +37,4 @@ COMMENT ON COLUMN articles.url IS '文件在 Vercel Blob Storage 中的存储链
 COMMENT ON COLUMN articles.status IS '论文的当前状态 (DRAFT, PENDING_REVIEW, IN_REVIEW, REVIEW_COMPLETE)';
 COMMENT ON COLUMN articles.uploader_id IS '上传该论文的用户ID';
 COMMENT ON COLUMN articles.reviewer_id IS '被指派审阅该论文的老师ID';
-COMMENT ON COLUMN articles.uploaded_at IS '论文上传时间'; 
+COMMENT ON COLUMN articles.uploaded_at IS '论文上传时间';

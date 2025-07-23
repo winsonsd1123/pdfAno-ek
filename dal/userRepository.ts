@@ -250,4 +250,4 @@ export class UserRepository {
       throw new Error(`Failed to update profile timestamp: ${profileError.message}`);
     }
   }
-} 
+}

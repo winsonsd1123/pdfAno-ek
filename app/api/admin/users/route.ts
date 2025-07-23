@@ -101,4 +101,4 @@ export async function POST(request: NextRequest) {
       { status: error.message?.includes('already exists') ? 400 : 500 }
     );
   }
-} 
+}

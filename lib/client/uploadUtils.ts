@@ -25,4 +25,4 @@ export function validateFile(file: File, options: ValidationOptions): void {
   if (!options.allowedTypes.includes(file.type)) {
     throw new FileUploadError(`不支持的文件类型。请上传 ${options.allowedTypes.join(', ')} 格式的文件。`);
   }
-} 
+}

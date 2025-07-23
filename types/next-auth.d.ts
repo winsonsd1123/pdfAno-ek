@@ -42,4 +42,4 @@ declare module "next-auth/jwt" {
     avatarUrl?: string | null;
     updated_at: string;
   }
-} 
+}

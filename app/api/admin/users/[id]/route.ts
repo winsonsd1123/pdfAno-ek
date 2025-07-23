@@ -96,4 +96,4 @@ export async function DELETE(
       { status: error.message?.includes('not found') ? 404 : 500 }
     );
   }
-} 
+}

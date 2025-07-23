@@ -166,4 +166,4 @@ export function useConfirmDialog() {
     hideConfirm,
     ConfirmDialog: ConfirmDialogComponent,
   }
-} 
+}

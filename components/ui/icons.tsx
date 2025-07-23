@@ -205,4 +205,4 @@ export const Icons = {
 }
 
 // 导入 Command 图标作为 Logo
-import { Command } from "lucide-react" 
+import { Command } from "lucide-react"

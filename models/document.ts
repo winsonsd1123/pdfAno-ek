@@ -34,4 +34,4 @@ export interface DocumentEntity {
 
 // API 响应类型
 export type DocumentListResponse = ApiResponse<DocumentListItemDto[]>
-export type DocumentDeleteResponse = ApiResponse<{ message: string }> 
+export type DocumentDeleteResponse = ApiResponse<{ message: string }>

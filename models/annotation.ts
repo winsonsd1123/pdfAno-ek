@@ -56,4 +56,4 @@ export interface BackendAnnotation {
   // 新增字段以支持回复功能
   isReply?: boolean
   inReplyTo?: string
-} 
+}

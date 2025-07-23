@@ -24,4 +24,4 @@ export type UploadStatus =
   | { type: 'validating' }
   | { type: 'uploading'; progress: number }
   | { type: 'success'; url: string }
-  | { type: 'error'; message: string } 
+  | { type: 'error'; message: string }
